@@ -1,0 +1,42 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: retail-engine-postgres
+    environment:
+      POSTGRES_DB: retail_engine
+      POSTGRES_USER: retail_engine
+      POSTGRES_PASSWORD: retail_engine
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U retail_engine -d retail_engine"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - retail-engine-network
+
+  app:
+    build: .
+    container_name: retail-engine-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/retail_engine
+      SPRING_DATASOURCE_USERNAME: retail_engine
+      SPRING_DATASOURCE_PASSWORD: retail_engine
+      SERVER_PORT: 8080
+    ports:
+      - "8080:8080"
+    networks:
+      - retail-engine-network
+
+volumes:
+  postgres_data:
+
+networks:
+  retail-engine-network:
+    driver: bridge

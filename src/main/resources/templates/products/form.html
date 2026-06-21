@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Product Form</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"/>
+    <style>
+        body { background-color: #f8f9fa; }
+        .navbar-brand { font-weight: 600; }
+        .is-invalid ~ .invalid-feedback { display: block; }
+    </style>
+</head>
+<body>
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
+    <div class="container">
+        <a class="navbar-brand" href="/products">Retail Engine</a>
+        <div class="navbar-nav ms-auto">
+            <a class="nav-link" href="/products">Catalog</a>
+            <a class="nav-link active" href="/products/new">New Product</a>
+            <a class="nav-link" href="/swagger-ui.html" target="_blank">API Docs</a>
+        </div>
+    </div>
+</nav>
+
+<div class="container pb-5">
+    <div id="alert-container"></div>
+
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <div class="card shadow-sm">
+                <div class="card-header bg-white">
+                    <h1 id="form-title" class="h4 mb-0">Create Product</h1>
+                </div>
+                <div class="card-body">
+                    <form id="product-form" novalidate>
+                        <div class="mb-3">
+                            <label for="sku" class="form-label">SKU</label>
+                            <input type="text" id="sku" name="sku" class="form-control" required/>
+                            <div class="invalid-feedback"></div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="name" class="form-label">Name</label>
+                            <input type="text" id="name" name="name" class="form-control" required/>
+                            <div class="invalid-feedback"></div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="description" class="form-label">Description</label>
+                            <textarea id="description" name="description" class="form-control" rows="3"></textarea>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="category" class="form-label">Category</label>
+                            <input type="text" id="category" name="category" class="form-control" required/>
+                            <div class="invalid-feedback"></div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-4 mb-3">
+                                <label for="price" class="form-label">Price</label>
+                                <input type="number" id="price" name="price" step="0.01" min="0" class="form-control" required/>
+                                <div class="invalid-feedback"></div>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label for="stock" class="form-label">Stock</label>
+                                <input type="number" id="stock" name="stock" min="0" class="form-control" required/>
+                                <div class="invalid-feedback"></div>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label for="weightKg" class="form-label">Weight (kg)</label>
+                                <input type="number" id="weightKg" name="weightKg" step="0.001" min="0" class="form-control" required/>
+                                <div class="invalid-feedback"></div>
+                            </div>
+                        </div>
+
+                        <div class="d-flex gap-2">
+                            <button type="submit" id="submit-btn" class="btn btn-primary">Save Product</button>
+                            <a href="/products" class="btn btn-outline-secondary">Cancel</a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+    const form = document.getElementById('product-form');
+    const formTitle = document.getElementById('form-title');
+    const submitBtn = document.getElementById('submit-btn');
+    const skuInput = document.getElementById('sku');
+    const alertContainer = document.getElementById('alert-container');
+
+    const editMatch = window.location.pathname.match(/\/products\/(\d+)\/edit$/);
+    const productId = editMatch ? editMatch[1] : null;
+    const isEditMode = productId !== null;
+
+    function showAlert(message, type = 'danger') {
+        alertContainer.innerHTML = `
+            <div class="alert alert-${type} alert-dismissible fade show" role="alert">
+                ${escapeHtml(message)}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>`;
+    }
+
+    function clearValidation() {
+        form.querySelectorAll('.is-invalid').forEach(el => el.classList.remove('is-invalid'));
+        form.querySelectorAll('.invalid-feedback').forEach(el => el.textContent = '');
+    }
+
+    function applyValidationErrors(errors) {
+        Object.entries(errors).forEach(([field, message]) => {
+            const input = form.elements[field];
+            if (!input) {
+                return;
+            }
+            input.classList.add('is-invalid');
+            const feedback = input.parentElement.querySelector('.invalid-feedback');
+            if (feedback) {
+                feedback.textContent = message;
+            }
+        });
+    }
+
+    function buildPayload() {
+        return {
+            sku: form.sku.value.trim(),
+            name: form.name.value.trim(),
+            description: form.description.value.trim(),
+            category: form.category.value.trim(),
+            price: Number(form.price.value),
+            stock: Number(form.stock.value),
+            weightKg: Number(form.weightKg.value)
+        };
+    }
+
+    function fillForm(product) {
+        form.sku.value = product.sku;
+        form.name.value = product.name;
+        form.description.value = product.description || '';
+        form.category.value = product.category;
+        form.price.value = product.price;
+        form.stock.value = product.stock;
+        form.weightKg.value = product.weightKg;
+    }
+
+    async function loadProduct() {
+        if (!isEditMode) {
+            return;
+        }
+        formTitle.textContent = 'Edit Product';
+        submitBtn.textContent = 'Update Product';
+        skuInput.readOnly = true;
+        try {
+            const product = await apiRequest(`${API_BASE}/${productId}`);
+            fillForm(product);
+        } catch (error) {
+            showAlert(error.body?.message || error.message);
+        }
+    }
+
+    form.addEventListener('submit', async event => {
+        event.preventDefault();
+        clearValidation();
+
+        try {
+            const payload = buildPayload();
+            if (isEditMode) {
+                await apiRequest(`${API_BASE}/${productId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+            } else {
+                await apiRequest(API_BASE, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+            }
+            window.location.href = '/products';
+        } catch (error) {
+            if (error.status === 400 && error.body?.errors) {
+                applyValidationErrors(error.body.errors);
+            } else {
+                showAlert(error.body?.message || error.message);
+            }
+        }
+    });
+
+    document.addEventListener('DOMContentLoaded', loadProduct);
+</script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
