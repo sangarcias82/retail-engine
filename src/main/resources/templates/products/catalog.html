@@ -59,6 +59,14 @@
     </div>
 
     <div id="products-grid" class="row g-4"></div>
+
+    <nav id="pagination-nav" class="d-none mt-4" aria-label="Product catalog pagination">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <button type="button" id="prev-page" class="btn btn-outline-secondary btn-sm">Previous</button>
+            <span id="page-info" class="text-muted small"></span>
+            <button type="button" id="next-page" class="btn btn-outline-secondary btn-sm">Next</button>
+        </div>
+    </nav>
 </div>
 
 <script src="/js/api.js"></script>
@@ -67,6 +75,12 @@
     const productsGrid = document.getElementById('products-grid');
     const productsEmpty = document.getElementById('products-empty');
     const importResult = document.getElementById('import-result');
+    const paginationNav = document.getElementById('pagination-nav');
+    const pageInfo = document.getElementById('page-info');
+    const prevPageBtn = document.getElementById('prev-page');
+    const nextPageBtn = document.getElementById('next-page');
+    const PAGE_SIZE = 12;
+    let currentPage = 0;
 
     function showAlert(message, type = 'success') {
         alertContainer.innerHTML = `
@@ -119,11 +133,32 @@
         });
     }
 
-    async function loadProducts(search = '') {
+    function renderPagination(pageData) {
+        if (!pageData || pageData.totalPages <= 1) {
+            paginationNav.classList.add('d-none');
+            return;
+        }
+
+        paginationNav.classList.remove('d-none');
+        pageInfo.textContent = `Page ${pageData.number + 1} of ${pageData.totalPages} (${pageData.totalElements} products)`;
+        prevPageBtn.disabled = pageData.first;
+        nextPageBtn.disabled = pageData.last;
+    }
+
+    function currentSearchTerm() {
+        return document.getElementById('search-input').value.trim();
+    }
+
+    async function loadProducts(search = '', page = 0) {
+        currentPage = page;
         try {
-            const url = search ? `${API_BASE}?search=${encodeURIComponent(search)}` : API_BASE;
-            const products = await apiRequest(url);
-            renderProducts(products);
+            const params = new URLSearchParams({ page: String(page), size: String(PAGE_SIZE) });
+            if (search) {
+                params.set('search', search);
+            }
+            const pageData = await apiRequest(`${API_BASE}?${params}`);
+            renderProducts(pageData.content || []);
+            renderPagination(pageData);
         } catch (error) {
             showAlert(error.body?.message || error.message, 'danger');
         }
@@ -131,7 +166,17 @@
 
     document.getElementById('search-form').addEventListener('submit', event => {
         event.preventDefault();
-        loadProducts(document.getElementById('search-input').value.trim());
+        loadProducts(currentSearchTerm(), 0);
+    });
+
+    prevPageBtn.addEventListener('click', () => {
+        if (currentPage > 0) {
+            loadProducts(currentSearchTerm(), currentPage - 1);
+        }
+    });
+
+    nextPageBtn.addEventListener('click', () => {
+        loadProducts(currentSearchTerm(), currentPage + 1);
     });
 
     document.getElementById('import-form').addEventListener('submit', async event => {
@@ -153,7 +198,7 @@
             importResult.innerHTML = html;
             importResult.classList.remove('d-none');
             fileInput.value = '';
-            await loadProducts(document.getElementById('search-input').value.trim());
+            await loadProducts(currentSearchTerm(), currentPage);
         } catch (error) {
             showAlert(error.body?.message || error.message, 'danger');
         }
@@ -173,7 +218,7 @@
                     body: JSON.stringify({ productId: Number(productId), quantity: Number(qtyInput.value) })
                 });
                 showAlert(body.message, 'success');
-                await loadProducts(document.getElementById('search-input').value.trim());
+                await loadProducts(currentSearchTerm(), currentPage);
             } catch (error) {
                 showAlert(error.body?.message || error.message, 'danger');
             }
@@ -186,7 +231,7 @@
             try {
                 const body = await apiRequest(`${API_BASE}/${deleteBtn.dataset.id}`, { method: 'DELETE' });
                 showAlert(body.message, 'success');
-                await loadProducts(document.getElementById('search-input').value.trim());
+                await loadProducts(currentSearchTerm(), currentPage);
             } catch (error) {
                 showAlert(error.body?.message || error.message, 'danger');
             }

@@ -7,7 +7,7 @@ COPY src ./src
 
 RUN apk add --no-cache maven && \
     mvn -B -DskipTests package && \
-    cp target/retail-engine-*.jar app.jar
+    cp target/retail-engine-1.0.0-SNAPSHOT.jar app.jar
 
 # Runtime stage
 FROM eclipse-temurin:21-jre-alpine

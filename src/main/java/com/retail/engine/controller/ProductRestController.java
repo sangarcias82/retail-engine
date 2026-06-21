@@ -16,9 +16,9 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -30,8 +30,6 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
-
-import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1/products")
@@ -51,12 +49,16 @@ public class ProductRestController {
     }
 
     @GetMapping
-    @Operation(summary = "List or search products", description = "Returns all products or filters by name/SKU (case-insensitive).")
+    @Operation(summary = "List or search products", description = "Returns a paginated catalog, optionally filtered by name or SKU (case-insensitive partial match).")
     @ApiResponse(responseCode = "200", description = "Products retrieved successfully")
-    public List<Product> listProducts(
+    public Page<Product> listProducts(
             @Parameter(description = "Optional search term for name or SKU")
-            @RequestParam(required = false) String search) {
-        return productService.searchProducts(search);
+            @RequestParam(required = false) String search,
+            @Parameter(description = "Zero-based page index")
+            @RequestParam(defaultValue = "0") int page,
+            @Parameter(description = "Page size (max 100)")
+            @RequestParam(defaultValue = "12") int size) {
+        return productService.searchProducts(search, page, size);
     }
 
     @GetMapping("/{id}")
@@ -112,7 +114,7 @@ public class ProductRestController {
     }
 
     @PostMapping("/purchase")
-    @Operation(summary = "Purchase a product", description = "Simulates checkout: decrements stock with optimistic locking and creates an order.")
+    @Operation(summary = "Purchase a product", description = "Simulates checkout: locks the product row for update, decrements stock with optimistic locking, and creates an order.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Purchase completed"),
             @ApiResponse(responseCode = "409", description = "Insufficient stock or concurrent conflict")

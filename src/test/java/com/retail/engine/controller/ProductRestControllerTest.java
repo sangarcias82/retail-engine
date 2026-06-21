@@ -15,6 +15,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.MockMvc;
@@ -75,14 +77,32 @@ class ProductRestControllerTest {
     }
 
     @Test
-    @DisplayName("Should list products with optional search")
+    @DisplayName("Should list products with optional search and pagination")
     void shouldListProducts() throws Exception {
-        when(productService.searchProducts("Mouse")).thenReturn(List.of(sampleProduct()));
+        when(productService.searchProducts("Mouse", 0, 12))
+                .thenReturn(new PageImpl<>(List.of(sampleProduct()), PageRequest.of(0, 12), 1));
 
         mockMvc.perform(get("/api/v1/products").param("search", "Mouse"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$", hasSize(1)))
-                .andExpect(jsonPath("$[0].sku", is("RS-001")));
+                .andExpect(jsonPath("$.content", hasSize(1)))
+                .andExpect(jsonPath("$.content[0].sku", is("RS-001")))
+                .andExpect(jsonPath("$.totalElements", is(1)))
+                .andExpect(jsonPath("$.size", is(12)));
+    }
+
+    @Test
+    @DisplayName("Should accept explicit page and size parameters")
+    void shouldAcceptPaginationParameters() throws Exception {
+        when(productService.searchProducts(null, 1, 5))
+                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(1, 5), 6));
+
+        mockMvc.perform(get("/api/v1/products").param("page", "1").param("size", "5"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.number", is(1)))
+                .andExpect(jsonPath("$.size", is(5)))
+                .andExpect(jsonPath("$.totalElements", is(6)));
+
+        verify(productService).searchProducts(null, 1, 5);
     }
 
     @Test
