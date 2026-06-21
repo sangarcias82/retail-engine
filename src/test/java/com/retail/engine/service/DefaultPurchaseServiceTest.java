@@ -57,7 +57,7 @@ class DefaultPurchaseServiceTest {
     @DisplayName("Should decrement stock and create a completed order")
     void shouldDecrementStockAndCreateOrder() {
         Product product = buildProduct(1L, 10, new BigDecimal("29.99"));
-        when(productRepository.findById(1L)).thenReturn(Optional.of(product));
+        when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
         when(productRepository.save(product)).thenReturn(product);
 
         purchaseService.purchase(1L, 3);
@@ -83,7 +83,7 @@ class DefaultPurchaseServiceTest {
     @DisplayName("Should allow purchase when quantity equals remaining stock")
     void shouldAllowPurchaseWhenQuantityEqualsStock() {
         Product product = buildProduct(1L, 5, new BigDecimal("10.00"));
-        when(productRepository.findById(1L)).thenReturn(Optional.of(product));
+        when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
         when(productRepository.save(product)).thenReturn(product);
 
         purchaseService.purchase(1L, 5);
@@ -95,7 +95,7 @@ class DefaultPurchaseServiceTest {
     @Test
     @DisplayName("Should throw when product is not found")
     void shouldThrowWhenProductNotFound() {
-        when(productRepository.findById(99L)).thenReturn(Optional.empty());
+        when(productRepository.findByIdForUpdate(99L)).thenReturn(Optional.empty());
 
         PurchaseException ex = assertThrows(PurchaseException.class,
                 () -> purchaseService.purchase(99L, 1));
@@ -109,7 +109,7 @@ class DefaultPurchaseServiceTest {
     @DisplayName("Should throw when requested quantity exceeds stock")
     void shouldThrowWhenInsufficientStock() {
         Product product = buildProduct(1L, 2, new BigDecimal("10.00"));
-        when(productRepository.findById(1L)).thenReturn(Optional.of(product));
+        when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
 
         PurchaseException ex = assertThrows(PurchaseException.class,
                 () -> purchaseService.purchase(1L, 3));
@@ -129,14 +129,14 @@ class DefaultPurchaseServiceTest {
                 () -> purchaseService.purchase(1L, quantity));
 
         assertEquals("Quantity must be greater than zero.", ex.getMessage());
-        verify(productRepository, never()).findById(any());
+        verify(productRepository, never()).findByIdForUpdate(any());
     }
 
     @Test
     @DisplayName("Should throw when optimistic lock conflict occurs on save")
     void shouldThrowWhenOptimisticLockConflictOccurs() {
         Product product = buildProduct(1L, 10, new BigDecimal("15.00"));
-        when(productRepository.findById(1L)).thenReturn(Optional.of(product));
+        when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
         when(productRepository.save(product)).thenThrow(new OptimisticLockException());
 
         PurchaseException ex = assertThrows(PurchaseException.class,

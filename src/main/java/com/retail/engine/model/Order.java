@@ -52,6 +52,14 @@ public class Order {
     public void addItem(OrderItem item) {
         items.add(item);
         item.setOrder(this);
+        recalculateTotalAmount();
+    }
+
+    private void recalculateTotalAmount() {
+        totalAmount = items.stream()
+                .map(orderItem -> orderItem.getPriceAtPurchase()
+                        .multiply(BigDecimal.valueOf(orderItem.getQuantity())))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     public Long getId() {

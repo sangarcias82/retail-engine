@@ -10,7 +10,6 @@ import jakarta.persistence.OptimisticLockException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.concurrent.atomic.AtomicLong;
@@ -35,7 +34,7 @@ public class DefaultPurchaseService implements PurchaseService {
             throw new PurchaseException("Quantity must be greater than zero.");
         }
 
-        Product product = productRepository.findById(productId)
+        Product product = productRepository.findByIdForUpdate(productId)
                 .orElseThrow(() -> new PurchaseException("Product not found."));
 
         if (product.getStock() < quantity) {
@@ -49,7 +48,6 @@ public class DefaultPurchaseService implements PurchaseService {
             Order order = new Order();
             order.setOrderNumber(generateOrderNumber());
             order.setStatus(OrderStatus.COMPLETED);
-            order.setTotalAmount(product.getPrice().multiply(BigDecimal.valueOf(quantity)));
 
             OrderItem item = new OrderItem();
             item.setProduct(product);
