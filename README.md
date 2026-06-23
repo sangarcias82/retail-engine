@@ -5,7 +5,7 @@
 - [Executive Summary](#executive-summary)
 - [Sample Data](#sample-data)
 - [Architecture Overview](#architecture-overview)
-- [Concurrent Purchase Flow (Optimistic Locking)](#concurrent-purchase-flow)
+- [Concurrent Purchase Flow (Pessimistic Locking)](#concurrent-purchase-flow)
 - [Domain Model](#domain-model)
 - [REST API Contract](#rest-api)
 - [UI Pages](#ui-pages)
@@ -32,7 +32,7 @@ unified REST API with a lightweight Thymeleaf + `fetch` frontend with:
 - PostgreSQL
 - Docker
 - OpenAPI / Swagger
-- Optimistic Locking
+- Pessimistic Locking (checkout)
 - CSV Bulk Import
 
 **Features:**
@@ -41,9 +41,9 @@ unified REST API with a lightweight Thymeleaf + `fetch` frontend with:
 - Product Search
 - CSV Import
 - Simulated Checkout
-- Automated Testing (48 tests)
+- Automated Testing (56 tests)
 
-Designed with a **REST-first architecture** and production-oriented concerns such as idempotent imports, inventory concurrency control via optimistic locking, and isolated test execution (H2 in-memory for `./mvnw test`, PostgreSQL in Docker for runtime).
+Designed with a **REST-first architecture** and production-oriented concerns such as idempotent imports, inventory concurrency control via pessimistic row locking at checkout, and isolated test execution (H2 in-memory for `./mvnw test`, PostgreSQL in Docker for runtime).
 
 ---
 
@@ -77,14 +77,14 @@ The application follows a **single REST API + thin presentation layer** pattern:
 ---
 
 <a id="concurrent-purchase-flow"></a>
-## Concurrent Purchase Flow (Optimistic Locking)
+## Concurrent Purchase Flow (Pessimistic Locking)
 
-When two clients attempt to purchase the last unit of stock simultaneously, the system relies on **optimistic locking** (`@Version` on `Product`) instead of pessimistic row locks. Hibernate validates the version at flush time; a conflict yields `OptimisticLockException`, mapped to HTTP `409 Conflict` for the client.
+When two clients attempt to purchase the last unit of stock simultaneously, the checkout path acquires a **pessimistic write lock** on the product row (`findByIdForUpdate` → `SELECT … FOR UPDATE`). Concurrent purchase attempts on the same product are serialized at the database level until the active transaction completes, preventing overselling without relying on client retries. The `@Version` field remains on `Product` as an entity-level safeguard for other update paths.
 
-![Concurrent Purchase Flow — optimistic locking prevents overselling under parallel checkout requests](docs/diagrams/concurrent-purchase-flow.png)
+![Concurrent Purchase Flow — serialized checkout under parallel purchase requests](docs/diagrams/concurrent-purchase-flow.png)
 
 * **The problem:** Two users hit **Purchase** at the same millisecond for a product with only one unit left.
-* **The solution:** Stock decrement runs inside a transaction; if the version changed between read and write, the purchase is rejected and the user is prompted to retry — no deadlocks, no negative stock.
+* **The solution:** Stock decrement runs inside a transaction after acquiring a row-level write lock (`SELECT … FOR UPDATE`). A concurrent checkout on the same product waits until the lock is released; it then completes successfully or fails with **insufficient stock** if the prior transaction consumed the remaining units — no overselling, no client retry loop for version conflicts.
 
 ---
 
@@ -118,9 +118,9 @@ All business operations are exposed through a single versioned controller. The U
 | `GET` | `/api/v1/products/{id}` | Retrieve a single product by primary key | Returns `Product` JSON. `404` if not found. |
 | `POST` | `/api/v1/products` | Create a new product | JSON body (`ProductRequest`). Returns `201 Created` with the persisted entity. |
 | `PUT` | `/api/v1/products/{id}` | Update product metadata in place | JSON body (`ProductRequest`). Updates name, description, category, price, stock, and weight. The edit UI treats **SKU as immutable** (read-only field) to preserve catalog identity across integrations. |
-| `DELETE` | `/api/v1/products/{id}` | Remove a product from the catalog | Returns a success message. `404` if not found. |
+| `DELETE` | `/api/v1/products/{id}` | Remove a product from the catalog | Returns a success message. `404` if not found. `409` if the product has existing purchase history in `order_items`. |
 | `POST` | `/api/v1/products/import` | Bulk CSV ingestion pipeline | `multipart/form-data` with a `file` field. Returns processed count and line-level errors. Upserts by SKU. |
-| `POST` | `/api/v1/products/purchase` | Simulated checkout / stock decrement | JSON body `{ "productId": number, "quantity": number }`. Returns order confirmation or `409 Conflict` on optimistic-lock failure. |
+| `POST` | `/api/v1/products/purchase` | Simulated checkout / stock decrement | JSON body `{ "productId": number, "quantity": number }`. Returns order confirmation or `409 Conflict` when stock is insufficient. |
 
 **Interactive documentation:** http://localhost:8080/swagger-ui.html
 
@@ -179,7 +179,7 @@ Although Java 25 is available, this project intentionally targets **Java 21 LTS*
 
 * **Database:** **PostgreSQL**
     * *Decision:* True enterprise applications require absolute consistency for commercial numbers, transactions, and inventories. Relational PostgreSQL ensures ACID compliance, preventing financial or inventory anomalies.
-    * *Alternatives considered:* NoSQL was evaluated for schema flexibility, but the fixed tabular CSV structure and transaction-safe purchase flow require ACID guarantees. PostgreSQL plus application-level optimistic locking was selected to prevent inventory race conditions without heavy database locking overhead.
+    * *Alternatives considered:* NoSQL was evaluated for schema flexibility, but the fixed tabular CSV structure and transaction-safe purchase flow require ACID guarantees. PostgreSQL plus pessimistic row locking at checkout was selected to prevent inventory race conditions without client-side retry loops.
 * **User Interface:** **Thymeleaf shells + Bootstrap 5 (CDN) + native `fetch`**
     * *Decision:* Thymeleaf renders lightweight HTML pages with no server-side business state. All data flows through the unified REST API, eliminating duplicated controller logic.
 
@@ -211,19 +211,20 @@ The project consciously avoids introducing a dedicated Node.js-based Single Page
 
 ### 2. High-Concurrency Strategy (Race Conditions on Purchase)
 
-See the [Concurrent Purchase Flow (Optimistic Locking)](#concurrent-purchase-flow) diagram for the end-to-end sequence. The checkout path combines **pessimistic row locking on read** (`findByIdForUpdate`) with **optimistic version validation on write** (`@Version` on `Product`). Concurrent conflicts still surface as `409 Conflict` to the REST client when the version changes between read and flush.
+See the [Concurrent Purchase Flow (Pessimistic Locking)](#concurrent-purchase-flow) diagram for the end-to-end sequence. The checkout path acquires a **pessimistic write lock** on read (`findByIdForUpdate`) so concurrent purchase attempts on the same product are serialized at the database level. The `@Version` column on `Product` remains as an entity-level safeguard for non-checkout updates.
 
 ### 3. Catalog Search and Pagination
 
-* **Partial search:** The repository uses `Containing` queries (`LIKE '%term%'`) to support intuitive substring matches in the UI (e.g. `"mouse"` finds `"Wireless Mouse"`). This is ideal for demo-scale catalogs.
+* **Partial search:** The repository uses escaped `LIKE '%term%'` queries (`ESCAPE '\\'`) so user-supplied `%` and `_` characters are matched literally rather than as SQL wildcards.
 * **Production scaling:** At high volume, leading-wildcard `LIKE` patterns bypass standard B-Tree indexes in PostgreSQL. A production rollout would migrate search to **`pg_trgm` trigram indexes** or **Full-Text Search**, while keeping prefix search (`StartingWith` → `LIKE 'term%'`) where index-friendly lookups are enough.
 * **Pagination:** The catalog API returns a paginated `Page<Product>` (default `size=12`) so the UI never loads an unbounded product list into memory.
 
 ### 4. Resilient Ingestion Pipeline (Data Cleansing and Security)
 
-The ingestion service (`DefaultCsvImportService`) utilizes **Apache Commons CSV** and behaves under a strict defensive pipeline:
+The ingestion service (`DefaultCsvImportService`) utilizes **Apache Commons CSV** and delegates each valid row to `DefaultCsvImportRowWriter` under a strict defensive pipeline:
 
 * **Upsert Idempotency:** If an imported SKU already exists in the database, it behaves as an *Update* instead of duplicating data.
+* **Per-row transactions:** Each persisted row runs in `@Transactional(propagation = REQUIRES_NEW)` so a database failure on one line cannot roll back previously committed valid rows.
 * **Data Cleansing:** Removes currency symbols (`$29.99` → `29.99`), interprets `"free"` as zero price, and ignores blank rows.
 * **Partial Fault Tolerance:** Invalid rows are skipped with line-level error reporting; valid rows continue processing.
 * **XSS and SQL Injection Defense:** Parameterized JPA queries, JSON API responses, and client-side `escapeHtml()` when rendering catalog cards mitigate injection vectors from dirty CSV data.
@@ -239,10 +240,10 @@ The ingestion service (`DefaultCsvImportService`) utilizes **Apache Commons CSV*
 | Product CRUD | JSON REST API + Thymeleaf/`fetch` UI client |
 | CSV bulk import | Defensive upsert pipeline with line-level error reporting |
 | Product search | Case-insensitive partial filter by name or SKU with paginated API responses |
-| Simulated purchase | Pessimistic read lock + optimistic `@Version` write, persisted `Order` / `OrderItem` |
+| Simulated purchase | Pessimistic row lock at checkout (`findByIdForUpdate`), persisted `Order` / `OrderItem` |
 | Docker deployment | Multi-stage `Dockerfile` + `docker-compose.yml` |
 | API documentation | SpringDoc OpenAPI + Swagger UI |
-| Automated tests | 48 tests across seven test classes (service, web, persistence, and integration) |
+| Automated tests | 56 tests across eight test classes (service, web, persistence, and integration) |
 
 <a id="future-enhancements"></a>
 ## Future Enhancements
@@ -257,17 +258,18 @@ The current version is intentionally focused on catalog, import, and inventory i
 | **Shopping cart / multi-item checkout** | Purchase is single-product per action today — enough to demonstrate stock control and concurrency handling. |
 | **Full SPA frontend** (React, Angular, etc.) | The REST API is ready for a dedicated frontend; Thymeleaf shells + `fetch` keep v1 simple without a JS build chain. |
 | **Category enum enforcement** | Categories vary widely in real data (`Food & Beverage`, `Home & Office`, etc.). A flexible `String` field handles imports better than a rigid enum. |
+| **Order number generation in clustered deployments** | Checkout uses an in-memory `AtomicLong` sequence (`ORD-YYYYMMDD-###`), which resets on restart and is not shared across containers. Production would move to a database sequence, UUID, or distributed counter while keeping the unique `order_number` constraint. |
 | **Indexed catalog search (`pg_trgm` / FTS)** | Partial search today uses `LIKE '%term%'`, which does not scale on large PostgreSQL catalogs. Trigram indexes (`pg_trgm`) or Full-Text Search would preserve substring UX without sequential scans. |
 | **Email notifications, webhooks, or async messaging** | Post-purchase communication can be layered on once the core flow is stable. |
 | **Cloud deployment** (K8s, AWS, etc.) | Docker Compose covers local and single-host deployment; cloud infra is an operational next step. |
-| **Load / stress tests** | Optimistic locking is covered by unit and integration tests; dedicated concurrency benchmarks can follow in a hardening phase. |
+| **Load / stress tests** | Pessimistic checkout locking is covered by unit and integration tests; dedicated concurrency benchmarks can follow in a hardening phase. |
 
 ---
 
 <a id="test-suite"></a>
 ## Test Suite
 
-The project includes **48 automated tests** across seven test classes covering the service, web, persistence, and integration layers. Run them with:
+The project includes **56 automated tests** across eight test classes covering the service, web, persistence, and integration layers. Run them with:
 
 ```bash
 ./mvnw test
@@ -277,9 +279,9 @@ Tests use **JUnit 5**, **Mockito**, **Spring Boot Test**, and an in-memory **H2*
 
 **Test vs. production database:** Production runs on **PostgreSQL** (Docker Compose). Tests never connect to it. Spring Boot loads `src/test/resources/application.properties` during `./mvnw test`, which overrides the main datasource with an embedded H2 driver (`jdbc:h2:mem:testdb`). Service and web slice tests use mocks or `@WebMvcTest` and require no database at all — so the full suite runs immediately without Docker.
 
-### 1. Service Layer — `CsvImportServiceTest` (15 tests)
+### 1. Service Layer — `CsvImportServiceTest` (16 tests)
 
-Validates the defensive CSV ingestion pipeline in isolation (mocked repository).
+Validates CSV parsing, validation, and row-level error reporting. Persistence is delegated to `CsvImportRowWriter` (mocked).
 
 | Scenario | Objective |
 |----------|-----------|
@@ -292,35 +294,48 @@ Validates the defensive CSV ingestion pipeline in isolation (mocked repository).
 | Header-only CSV | Zero records processed, no crash |
 | Empty SKU or name | Line error recorded, row skipped |
 | Negative weight | Line error recorded |
-| Invalid price / stock format | Line error recorded with format message |
+| Invalid price / stock format | Line error recorded with field-specific format message |
 | Duplicate SKU in same file | Second row overwrites first within the batch |
+| Row writer failure isolation | A DB failure on one row is reported without aborting subsequent valid rows |
 | Empty file | Zero records processed without crashing |
 | Unreadable file | I/O failure wrapped in `RuntimeException` |
 
-### 2. Service Layer — `DefaultPurchaseServiceTest` (8 tests)
+### 2. Service Layer — `CsvImportRowWriterTest` (2 tests)
+
+Validates per-row upsert persistence (mocked repository).
+
+| Scenario | Objective |
+|----------|-----------|
+| Insert new SKU | Creates and flushes a new `Product` row |
+| Upsert existing SKU | Updates the existing entity in place by SKU |
+
+### 3. Service Layer — `DefaultPurchaseServiceTest` (7 tests)
 
 Validates the transactional purchase flow and order creation (mocked repositories).
 
 | Scenario | Objective |
 |----------|-----------|
-| Successful purchase | Stock decremented via pessimistic read + optimistic save; `Order` + `OrderItem` created with frozen price |
+| Successful purchase | Stock decremented under pessimistic lock; `Order` + `OrderItem` created with frozen price |
 | Quantity equals stock | Boundary case: stock reaches exactly zero |
 | Product not found | `PurchaseException` before any persistence |
 | Insufficient stock | Rejected when `quantity > stock` |
 | Invalid quantity | `null`, zero, or negative quantity rejected |
-| Optimistic lock conflict | `OptimisticLockException` mapped to user-friendly error (service layer) |
 
-### 3. Service Layer — `DefaultProductServiceTest` (3 tests)
+### 4. Service Layer — `DefaultProductServiceTest` (7 tests)
 
-Validates paginated catalog search orchestration (mocked repository).
+Validates paginated catalog search orchestration and SKU immutability (mocked repository).
 
 | Scenario | Objective |
 |----------|-----------|
 | Blank search | Returns a paginated `findAll` result with default page size |
-| Term search | Delegates partial match query with trimmed term and pageable |
+| Term search | Delegates escaped partial match query with trimmed term and pageable |
+| LIKE wildcard escape | `%`, `_`, and `\` in search terms are escaped before binding |
 | Invalid page/size | Clamps negative page to `0` and oversized page size to max `100` |
+| SKU immutability on update | `PUT` updates mutable fields but preserves the existing SKU |
+| Delete with purchase history | `409 Conflict` when `order_items` reference the product |
+| Delete without history | Product removed when no purchase records exist |
 
-### 4. Web Layer — `ProductRestControllerTest` (10 tests)
+### 5. Web Layer — `ProductRestControllerTest` (11 tests)
 
 Validates the unified JSON API via `@WebMvcTest` + `MockMvc`.
 
@@ -332,12 +347,13 @@ Validates the unified JSON API via `@WebMvcTest` + `MockMvc`.
 | Create | `POST` → 201 Created |
 | Validation error | `POST` with invalid body → 400 + field errors |
 | Update | `PUT /api/v1/products/{id}` |
-| Delete | `DELETE` → success message |
+| Delete success | `DELETE` → success message |
+| Delete blocked | `DELETE` → `409` when purchase history exists |
 | CSV import | `POST /import` multipart |
 | Purchase success | `POST /purchase` → 200 |
-| Purchase conflict | `POST /purchase` → 409 |
+| Insufficient stock on purchase | `POST /purchase` → `409 Conflict` with business error message |
 
-### 5. Web Layer — `PageControllerTest` (4 tests)
+### 6. Web Layer — `PageControllerTest` (4 tests)
 
 Validates Thymeleaf shell pages contain no business logic.
 
@@ -348,7 +364,7 @@ Validates Thymeleaf shell pages contain no business logic.
 | Create form shell | Renders `products/form` |
 | Edit form shell | Renders `products/form` |
 
-### 6. Persistence Layer — `ProductRepositoryTest` (6 tests)
+### 7. Persistence Layer — `ProductRepositoryTest` (7 tests)
 
 Validates JPA mapping and repository queries against in-memory H2 via `@DataJpaTest`.
 
@@ -358,12 +374,13 @@ Validates JPA mapping and repository queries against in-memory H2 via `@DataJpaT
 | Updated timestamp on modify | `@PreUpdate` advances `updatedAt` on each successful update |
 | Search by name or SKU | Case-insensitive partial match query works |
 | Paginated search | `Pageable` limits result size and exposes total element count |
+| LIKE wildcard literals | Escaped patterns treat `%` and `_` as literal characters |
 | Version increment | `@Version` field increments on each successful update |
 | Find by SKU | Unique SKU lookup returns correct product |
 
-> **Note:** Concurrent optimistic-lock conflicts are verified at the service layer (`DefaultPurchaseServiceTest`) by simulating `OptimisticLockException`. Checkout also acquires a pessimistic write lock via `findByIdForUpdate`. Dedicated multi-threaded stress tests are planned as a future hardening step.
+> **Note:** Checkout concurrency is enforced via `findByIdForUpdate` (pessimistic write lock). The `@Version` column on `Product` remains for other update paths. Dedicated multi-threaded stress tests are planned as a future hardening step.
 
-### 7. Integration — `SampleProductsCsvImportTest` (2 tests)
+### 8. Integration — `SampleProductsCsvImportTest` (2 tests)
 
 Imports **`sample-products.csv`** against a real H2 database (not mocks).
 
@@ -426,6 +443,8 @@ The catalog experience is **REST-first and asynchronous**: the browser never pos
 2. Select any product CSV (e.g. `sample-products.csv`) and click **Upload**.
 3. The client posts `multipart/form-data` to `POST /api/v1/products/import`. An inline result card renders the JSON response (processed count + line errors), then the grid reloads via `GET /api/v1/products` — all without leaving the page.
 
+![Bulk CSV import result — processed count and line-level error report inline on the catalog page](docs/diagrams/bulk-result.png)
+
 ### Step 2: Search and Catalog
 
 1. On load, the catalog fetches `GET /api/v1/products?page=0&size=12` and builds the card grid from the paginated JSON payload (`content` array).
@@ -433,18 +452,28 @@ The catalog experience is **REST-first and asynchronous**: the browser never pos
 3. When results span multiple pages, **Previous** / **Next** controls request additional pages without reloading the shell.
 4. Matching is case-insensitive partial text on name or SKU, handled entirely by the API layer.
 
+![Search by partial SKU — catalog filtered in place after `GET /api/v1/products?search=…`](docs/diagrams/search_by_partial_sku.png)
+
 ### Step 3: Purchase Flow
 
 1. Each card exposes a quantity input and a **Purchase** button (disabled when stock is zero).
 2. Clicking **Purchase** sends `POST /api/v1/products/purchase` with `{ productId, quantity }`.
 3. On `200 OK`, a dismissible alert renders the JSON message and the grid refreshes from the API so stock badges reflect the new state.
-4. On `409 Conflict` (optimistic lock) or insufficient stock, the error payload surfaces as an alert — inventory is never mutated client-side.
+4. On insufficient stock, the error payload surfaces as an alert — inventory is never mutated client-side.
 
 ### Step 4: Product Management (CRUD)
 
 1. **Create:** the form at `/products/new` submits `POST /api/v1/products` with a JSON body. Validation errors (`400`) map field-by-field from the API response.
 2. **Read / Update:** the edit shell at `/products/{id}/edit` loads the entity via `GET /api/v1/products/{id}` and persists changes with `PUT /api/v1/products/{id}` (SKU field read-only).
-3. **Delete:** each catalog card triggers `DELETE /api/v1/products/{id}` after confirmation, then reloads the grid asynchronously.
+
+![Edit Product form — SKU displayed as read-only while mutable catalog fields are editable](docs/diagrams/edit-product.png)
+
+3. **Delete:** each catalog card triggers `DELETE /api/v1/products/{id}` after confirmation, then reloads the grid asynchronously. Products with purchase history are protected and return `409 Conflict` with a clear inline alert.
+
+![Successful product deletion — confirmation alert after DELETE succeeds](docs/diagrams/delete.png)
+
+![Delete blocked by purchase history — 409 Conflict surfaced as an inline alert on the catalog page](docs/diagrams/cannot-delete.png)
+
 4. After a successful create, the client navigates to `/products` where the new item is immediately visible via the standard catalog fetch.
 
 ---
@@ -456,4 +485,4 @@ The catalog experience is **REST-first and asynchronous**: the browser never pos
 ./mvnw test
 ```
 
-Expected output: **48 tests, 0 failures**.
+Expected output: **56 tests, 0 failures**.
