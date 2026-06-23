@@ -117,9 +117,9 @@ All business operations are exposed through a single versioned controller. The U
 | `GET` | `/api/v1/products` | List or search the catalog | Optional query `?search=` (name or SKU, case-insensitive partial match), `?page=` (default `0`), `?size=` (default `12`, max `100`). Returns a Spring Data `Page` JSON payload (`content`, `totalElements`, `totalPages`, etc.). |
 | `GET` | `/api/v1/products/{id}` | Retrieve a single product by primary key | Returns `Product` JSON. `404` if not found. |
 | `POST` | `/api/v1/products` | Create a new product | JSON body (`ProductRequest`). Returns `201 Created` with the persisted entity. |
-| `PUT` | `/api/v1/products/{id}` | Update product metadata in place | JSON body (`ProductRequest`). Updates name, description, category, price, stock, and weight. The edit UI treats **SKU as immutable** (read-only field) to preserve catalog identity across integrations. |
+| `PUT` | `/api/v1/products/{id}` | Update product metadata in place | JSON body (`UpdateProductRequest` — no `sku` field). Updates name, description, category, price, stock, and weight. SKU is immutable after creation. |
 | `DELETE` | `/api/v1/products/{id}` | Remove a product from the catalog | Returns a success message. `404` if not found. `409` if the product has existing purchase history in `order_items`. |
-| `POST` | `/api/v1/products/import` | Bulk CSV ingestion pipeline | `multipart/form-data` with a `file` field. Returns processed count and line-level errors. Upserts by SKU. |
+| `POST` | `/api/v1/products/import` | Bulk CSV ingestion pipeline | `multipart/form-data` with a `file` field (max **10 MB**). Returns processed count and line-level errors. Upserts by SKU. |
 | `POST` | `/api/v1/products/purchase` | Simulated checkout / stock decrement | JSON body `{ "productId": number, "quantity": number }`. Returns order confirmation or `409 Conflict` when stock is insufficient. |
 
 **Interactive documentation:** http://localhost:8080/swagger-ui.html
@@ -226,7 +226,8 @@ The ingestion service (`DefaultCsvImportService`) utilizes **Apache Commons CSV*
 * **Upsert Idempotency:** If an imported SKU already exists in the database, it behaves as an *Update* instead of duplicating data.
 * **Per-row transactions:** Each persisted row runs in `@Transactional(propagation = REQUIRES_NEW)` so a database failure on one line cannot roll back previously committed valid rows.
 * **Data Cleansing:** Removes currency symbols (`$29.99` → `29.99`), interprets `"free"` as zero price, and ignores blank rows.
-* **Partial Fault Tolerance:** Invalid rows are skipped with line-level error reporting; valid rows continue processing.
+* **Partial Fault Tolerance:** Invalid rows are skipped with line-level error reporting; valid rows continue processing. The catalog UI uses a **warning** summary when both processed rows and line errors are present.
+* **Upload size limits:** `spring.servlet.multipart.max-file-size=10MB` and `max-request-size=10MB` reject oversized uploads at the Tomcat layer before the CSV pipeline runs, mitigating accidental or malicious large-file DoS against the container.
 * **XSS and SQL Injection Defense:** Parameterized JPA queries, JSON API responses, and client-side `escapeHtml()` when rendering catalog cards mitigate injection vectors from dirty CSV data.
 
 ---
@@ -441,7 +442,7 @@ The catalog experience is **REST-first and asynchronous**: the browser never pos
 
 1. On the catalog page (`/products`), open the **Bulk CSV Import** card.
 2. Select any product CSV (e.g. `sample-products.csv`) and click **Upload**.
-3. The client posts `multipart/form-data` to `POST /api/v1/products/import`. An inline result card renders the JSON response (processed count + line errors), then the grid reloads via `GET /api/v1/products` — all without leaving the page.
+3. The client posts `multipart/form-data` to `POST /api/v1/products/import`. An inline result card renders the JSON response (processed count + line-level errors). Imports with partial failures show a **warning** summary plus a detailed error list; fully successful imports show a green success summary. The grid then reloads via `GET /api/v1/products` — all without leaving the page.
 
 ![Bulk CSV import result — processed count and line-level error report inline on the catalog page](docs/diagrams/bulk-result.png)
 
@@ -461,10 +462,14 @@ The catalog experience is **REST-first and asynchronous**: the browser never pos
 3. On `200 OK`, a dismissible alert renders the JSON message and the grid refreshes from the API so stock badges reflect the new state.
 4. On insufficient stock, the error payload surfaces as an alert — inventory is never mutated client-side.
 
+![Purchase completed — success alert and refreshed stock badge after `POST /api/v1/products/purchase`](docs/diagrams/purchase.png)
+
 ### Step 4: Product Management (CRUD)
 
 1. **Create:** the form at `/products/new` submits `POST /api/v1/products` with a JSON body. Validation errors (`400`) map field-by-field from the API response.
-2. **Read / Update:** the edit shell at `/products/{id}/edit` loads the entity via `GET /api/v1/products/{id}` and persists changes with `PUT /api/v1/products/{id}` (SKU field read-only).
+
+![Create Product form — field-level validation surfaced inline before submit](docs/diagrams/product-creation.png)
+2. **Read / Update:** the edit shell at `/products/{id}/edit` loads the entity via `GET /api/v1/products/{id}` and persists mutable fields with `PUT /api/v1/products/{id}` using `UpdateProductRequest` (no `sku` in the JSON body; SKU remains read-only in the form).
 
 ![Edit Product form — SKU displayed as read-only while mutable catalog fields are editable](docs/diagrams/edit-product.png)
 
