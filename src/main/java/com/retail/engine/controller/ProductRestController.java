@@ -2,6 +2,7 @@ package com.retail.engine.controller;
 
 import com.retail.engine.dto.MessageResponse;
 import com.retail.engine.dto.ProductRequest;
+import com.retail.engine.dto.UpdateProductRequest;
 import com.retail.engine.dto.PurchaseRequest;
 import com.retail.engine.model.Product;
 import com.retail.engine.service.CsvImportResult;
@@ -89,7 +90,7 @@ public class ProductRestController {
             @ApiResponse(responseCode = "400", description = "Validation error"),
             @ApiResponse(responseCode = "404", description = "Product not found")
     })
-    public Product updateProduct(@PathVariable Long id, @Valid @RequestBody ProductRequest request) {
+    public Product updateProduct(@PathVariable Long id, @Valid @RequestBody UpdateProductRequest request) {
         return productService.updateProduct(id, request);
     }
 

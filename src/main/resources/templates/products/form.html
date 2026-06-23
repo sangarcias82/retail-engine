@@ -125,9 +125,8 @@
         });
     }
 
-    function buildPayload() {
+    function buildMutablePayload() {
         return {
-            sku: form.sku.value.trim(),
             name: form.name.value.trim(),
             description: form.description.value.trim(),
             category: form.category.value.trim(),
@@ -135,6 +134,14 @@
             stock: Number(form.stock.value),
             weightKg: Number(form.weightKg.value)
         };
+    }
+
+    function buildPayload() {
+        const payload = buildMutablePayload();
+        if (!isEditMode) {
+            return { sku: form.sku.value.trim(), ...payload };
+        }
+        return payload;
     }
 
     function fillForm(product) {

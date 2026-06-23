@@ -187,9 +187,14 @@
 
         try {
             const result = await apiRequest(`${API_BASE}/import`, { method: 'POST', body: formData });
+            const errorCount = result.errors?.length ?? 0;
+            const summaryClass = errorCount > 0 ? 'alert-warning' : 'alert-success';
+            const summaryText = errorCount > 0
+                ? `<strong>${result.processedCount}</strong> records processed with <strong>${errorCount}</strong> line error(s).`
+                : `<strong>${result.processedCount}</strong> records processed successfully.`;
             let html = `<div class="card mb-4"><div class="card-body">
-                <div class="alert alert-success mb-0"><strong>${result.processedCount}</strong> records processed successfully.</div>`;
-            if (result.errors && result.errors.length) {
+                <div class="alert ${summaryClass} mb-0">${summaryText}</div>`;
+            if (errorCount > 0) {
                 html += `<div class="alert alert-danger mt-3"><h3 class="h6">Import Errors</h3><ul class="mb-0">`;
                 result.errors.forEach(err => { html += `<li>${escapeHtml(err)}</li>`; });
                 html += `</ul></div>`;

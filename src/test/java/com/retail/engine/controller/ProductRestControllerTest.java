@@ -2,6 +2,7 @@ package com.retail.engine.controller;
 
 import com.retail.engine.controller.advice.GlobalExceptionHandler;
 import com.retail.engine.dto.ProductRequest;
+import com.retail.engine.dto.UpdateProductRequest;
 import com.retail.engine.model.Product;
 import com.retail.engine.service.CsvImportResult;
 import com.retail.engine.service.CsvImportService;
@@ -106,8 +107,12 @@ class ProductRestControllerTest {
         verify(productService).searchProducts(null, 1, 5);
     }
 
+    private UpdateProductRequest sampleUpdateRequest() {
+        return new UpdateProductRequest("Running Shoes", "Desc", "Footwear",
+                new BigDecimal("89.99"), 10, new BigDecimal("0.350"));
+    }
+
     @Test
-    @DisplayName("Should return product by id")
     void shouldGetProductById() throws Exception {
         when(productService.getProduct(1L)).thenReturn(sampleProduct());
 
@@ -147,11 +152,11 @@ class ProductRestControllerTest {
     @Test
     @DisplayName("Should update product")
     void shouldUpdateProduct() throws Exception {
-        when(productService.updateProduct(eq(1L), any(ProductRequest.class))).thenReturn(sampleProduct());
+        when(productService.updateProduct(eq(1L), any(UpdateProductRequest.class))).thenReturn(sampleProduct());
 
         mockMvc.perform(put("/api/v1/products/1")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(sampleRequest())))
+                        .content(objectMapper.writeValueAsString(sampleUpdateRequest())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.sku", is("RS-001")));
     }
