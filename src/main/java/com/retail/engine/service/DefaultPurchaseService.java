@@ -6,7 +6,6 @@ import com.retail.engine.model.OrderStatus;
 import com.retail.engine.model.Product;
 import com.retail.engine.repository.OrderRepository;
 import com.retail.engine.repository.ProductRepository;
-import jakarta.persistence.OptimisticLockException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -41,25 +40,20 @@ public class DefaultPurchaseService implements PurchaseService {
             throw new PurchaseException("Insufficient stock available.");
         }
 
-        try {
-            product.setStock(product.getStock() - quantity);
-            productRepository.save(product);
+        product.setStock(product.getStock() - quantity);
+        productRepository.save(product);
 
-            Order order = new Order();
-            order.setOrderNumber(generateOrderNumber());
-            order.setStatus(OrderStatus.COMPLETED);
+        Order order = new Order();
+        order.setOrderNumber(generateOrderNumber());
+        order.setStatus(OrderStatus.COMPLETED);
 
-            OrderItem item = new OrderItem();
-            item.setProduct(product);
-            item.setQuantity(quantity);
-            item.setPriceAtPurchase(product.getPrice());
-            order.addItem(item);
+        OrderItem item = new OrderItem();
+        item.setProduct(product);
+        item.setQuantity(quantity);
+        item.setPriceAtPurchase(product.getPrice());
+        order.addItem(item);
 
-            orderRepository.save(order);
-        } catch (OptimisticLockException ex) {
-            throw new PurchaseException(
-                    "Insufficient stock available or inventory changed. Please try again.");
-        }
+        orderRepository.save(order);
     }
 
     private String generateOrderNumber() {

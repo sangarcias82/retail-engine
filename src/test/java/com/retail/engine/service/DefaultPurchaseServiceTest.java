@@ -6,7 +6,6 @@ import com.retail.engine.model.OrderStatus;
 import com.retail.engine.model.Product;
 import com.retail.engine.repository.OrderRepository;
 import com.retail.engine.repository.ProductRepository;
-import jakarta.persistence.OptimisticLockException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -130,19 +129,5 @@ class DefaultPurchaseServiceTest {
 
         assertEquals("Quantity must be greater than zero.", ex.getMessage());
         verify(productRepository, never()).findByIdForUpdate(any());
-    }
-
-    @Test
-    @DisplayName("Should throw when optimistic lock conflict occurs on save")
-    void shouldThrowWhenOptimisticLockConflictOccurs() {
-        Product product = buildProduct(1L, 10, new BigDecimal("15.00"));
-        when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
-        when(productRepository.save(product)).thenThrow(new OptimisticLockException());
-
-        PurchaseException ex = assertThrows(PurchaseException.class,
-                () -> purchaseService.purchase(1L, 1));
-
-        assertEquals("Insufficient stock available or inventory changed. Please try again.", ex.getMessage());
-        verify(orderRepository, never()).save(any());
     }
 }

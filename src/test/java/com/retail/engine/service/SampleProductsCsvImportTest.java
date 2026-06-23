@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @DataJpaTest
-@Import(DefaultCsvImportService.class)
+@Import({DefaultCsvImportService.class, DefaultCsvImportRowWriter.class})
 class SampleProductsCsvImportTest {
 
     @Autowired

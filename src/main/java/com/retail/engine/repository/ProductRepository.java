@@ -16,10 +16,17 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     Optional<Product> findBySku(String sku);
 
     /**
-     * Partial match on name or SKU (SQL {@code LIKE '%term%'}).
-     * Suitable for demo catalogs; at scale prefer {@code pg_trgm} or full-text search in PostgreSQL.
+     * Partial match on name or SKU with escaped LIKE patterns ({@code ESCAPE '\'}).
+     * Callers must escape {@code %}, {@code _}, and {@code \} in the search term before binding.
      */
-    Page<Product> findByNameContainingIgnoreCaseOrSkuContainingIgnoreCase(String name, String sku, Pageable pageable);
+    @Query("""
+            SELECT p FROM Product p
+            WHERE LOWER(p.name) LIKE LOWER(CONCAT('%', :namePattern, '%')) ESCAPE '\\'
+               OR LOWER(p.sku) LIKE LOWER(CONCAT('%', :skuPattern, '%')) ESCAPE '\\'
+            """)
+    Page<Product> searchByNameOrSku(@Param("namePattern") String namePattern,
+                                    @Param("skuPattern") String skuPattern,
+                                    Pageable pageable);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT p FROM Product p WHERE p.id = :id")

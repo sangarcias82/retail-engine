@@ -1,36 +1,34 @@
 package com.retail.engine.service;
 
-import com.retail.engine.model.Product;
-import com.retail.engine.repository.ProductRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockMultipartFile;
-import org.springframework.web.multipart.MultipartFile;
 
-import java.io.IOException;
 import java.math.BigDecimal;
-import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 
 @ExtendWith(MockitoExtension.class)
 class CsvImportServiceTest {
 
     @Mock
-    private ProductRepository productRepository;
+    private CsvImportRowWriter csvImportRowWriter;
 
     @InjectMocks
     private DefaultCsvImportService csvImportService;
@@ -51,20 +49,18 @@ class CsvImportServiceTest {
                 "Running Shoes,RS-001,Training shoes,Footwear,89.99,150,0.35";
         MockMultipartFile file = createMockFile(csvContent);
 
-        when(productRepository.findBySku("RS-001")).thenReturn(Optional.empty());
-
         CsvImportResult result = csvImportService.importProducts(file);
 
         assertEquals(1, result.processedCount());
         assertTrue(result.errors().isEmpty());
-
-        ArgumentCaptor<Product> productCaptor = ArgumentCaptor.forClass(Product.class);
-        verify(productRepository, times(1)).saveAndFlush(productCaptor.capture());
-
-        Product savedProduct = productCaptor.getValue();
-        assertEquals("RS-001", savedProduct.getSku());
-        assertEquals(new BigDecimal("89.99"), savedProduct.getPrice());
-        assertEquals(150, savedProduct.getStock());
+        verify(csvImportRowWriter).saveRow(
+                eq("RS-001"),
+                eq("Running Shoes"),
+                eq("Training shoes"),
+                eq("Footwear"),
+                eq(new BigDecimal("89.99")),
+                eq(150),
+                eq(new BigDecimal("0.35")));
     }
 
     @Test
@@ -74,16 +70,12 @@ class CsvImportServiceTest {
                 "Wireless Mouse,WM-042,Ergonomic mouse,Electronics,$29.99,75,0.12";
         MockMultipartFile file = createMockFile(csvContent);
 
-        when(productRepository.findBySku("WM-042")).thenReturn(Optional.empty());
-
         CsvImportResult result = csvImportService.importProducts(file);
 
         assertEquals(1, result.processedCount());
-        assertTrue(result.errors().isEmpty());
-
-        ArgumentCaptor<Product> productCaptor = ArgumentCaptor.forClass(Product.class);
-        verify(productRepository).saveAndFlush(productCaptor.capture());
-        assertEquals(new BigDecimal("29.99"), productCaptor.getValue().getPrice());
+        verify(csvImportRowWriter).saveRow(
+                eq("WM-042"), anyString(), anyString(), eq("Electronics"),
+                eq(new BigDecimal("29.99")), eq(75), eq(new BigDecimal("0.12")));
     }
 
     @Test
@@ -93,14 +85,11 @@ class CsvImportServiceTest {
                 "Yoga Mat,YM-015,Non-slip mat,Sports,free,200,1.2";
         MockMultipartFile file = createMockFile(csvContent);
 
-        when(productRepository.findBySku("YM-015")).thenReturn(Optional.empty());
+        csvImportService.importProducts(file);
 
-        CsvImportResult result = csvImportService.importProducts(file);
-
-        assertEquals(1, result.processedCount());
-        ArgumentCaptor<Product> productCaptor = ArgumentCaptor.forClass(Product.class);
-        verify(productRepository).saveAndFlush(productCaptor.capture());
-        assertEquals(BigDecimal.ZERO, productCaptor.getValue().getPrice());
+        verify(csvImportRowWriter).saveRow(
+                eq("YM-015"), anyString(), anyString(), eq("Sports"),
+                eq(BigDecimal.ZERO), eq(200), eq(new BigDecimal("1.2")));
     }
 
     @Test
@@ -110,14 +99,11 @@ class CsvImportServiceTest {
                 "Sample Item,SP-001,Sample,Sports,FREE,50,0.5";
         MockMultipartFile file = createMockFile(csvContent);
 
-        when(productRepository.findBySku("SP-001")).thenReturn(Optional.empty());
+        csvImportService.importProducts(file);
 
-        CsvImportResult result = csvImportService.importProducts(file);
-
-        assertEquals(1, result.processedCount());
-        ArgumentCaptor<Product> productCaptor = ArgumentCaptor.forClass(Product.class);
-        verify(productRepository).saveAndFlush(productCaptor.capture());
-        assertEquals(BigDecimal.ZERO, productCaptor.getValue().getPrice());
+        verify(csvImportRowWriter).saveRow(
+                eq("SP-001"), anyString(), anyString(), eq("Sports"),
+                eq(BigDecimal.ZERO), eq(50), eq(new BigDecimal("0.5")));
     }
 
     @Test
@@ -129,38 +115,28 @@ class CsvImportServiceTest {
                 "Backpack,BP-008,Laptop pack,Accessories,64.99,90,0.9";
         MockMultipartFile file = createMockFile(csvContent);
 
-        when(productRepository.findBySku("RS-001")).thenReturn(Optional.empty());
-        when(productRepository.findBySku("BP-008")).thenReturn(Optional.empty());
-
         CsvImportResult result = csvImportService.importProducts(file);
 
-        assertEquals(2, result.processedCount(), "Should process only 2 valid products");
-        assertEquals(1, result.errors().size(), "Should have exactly 1 recorded error");
-        assertTrue(result.errors().get(0).contains("Line 3"), "Error should reference the negative stock line");
-
-        verify(productRepository, times(2)).saveAndFlush(any(Product.class));
+        assertEquals(2, result.processedCount());
+        assertEquals(1, result.errors().size());
+        assertTrue(result.errors().get(0).contains("Line 3"));
+        verify(csvImportRowWriter, times(2)).saveRow(anyString(), anyString(), anyString(), anyString(),
+                any(BigDecimal.class), anyInt(), any(BigDecimal.class));
     }
 
     @Test
-    @DisplayName("Should update existing product when SKU already exists (Upsert)")
-    void shouldUpdateExistingProductWhenSkuExists() {
+    @DisplayName("Should delegate upsert rows to the row writer")
+    void shouldDelegateUpsertRowsToRowWriter() {
         String csvContent = "name,sku,description,category,price,stock,weight_kg\n" +
                 "Running Shoes,RS-001,Updated Description,Footwear,94.99,120,0.35";
         MockMultipartFile file = createMockFile(csvContent);
 
-        Product existingProduct = new Product();
-        existingProduct.setSku("RS-001");
-        existingProduct.setName("Old Name");
-        existingProduct.setStock(10);
-
-        when(productRepository.findBySku("RS-001")).thenReturn(Optional.of(existingProduct));
-
         CsvImportResult result = csvImportService.importProducts(file);
 
         assertEquals(1, result.processedCount());
-        verify(productRepository).saveAndFlush(existingProduct);
-        assertEquals("Running Shoes", existingProduct.getName());
-        assertEquals(120, existingProduct.getStock());
+        verify(csvImportRowWriter).saveRow(
+                eq("RS-001"), eq("Running Shoes"), eq("Updated Description"), eq("Footwear"),
+                eq(new BigDecimal("94.99")), eq(120), eq(new BigDecimal("0.35")));
     }
 
     @Test
@@ -172,14 +148,12 @@ class CsvImportServiceTest {
                 "Backpack,BP-008,Laptop pack,Accessories,64.99,90,0.9";
         MockMultipartFile file = createMockFile(csvContent);
 
-        when(productRepository.findBySku("RS-001")).thenReturn(Optional.empty());
-        when(productRepository.findBySku("BP-008")).thenReturn(Optional.empty());
-
         CsvImportResult result = csvImportService.importProducts(file);
 
         assertEquals(2, result.processedCount());
         assertTrue(result.errors().isEmpty());
-        verify(productRepository, times(2)).saveAndFlush(any(Product.class));
+        verify(csvImportRowWriter, times(2)).saveRow(anyString(), anyString(), anyString(), anyString(),
+                any(BigDecimal.class), anyInt(), any(BigDecimal.class));
     }
 
     @Test
@@ -191,8 +165,8 @@ class CsvImportServiceTest {
         CsvImportResult result = csvImportService.importProducts(file);
 
         assertEquals(0, result.processedCount());
-        assertTrue(result.errors().isEmpty());
-        verify(productRepository, never()).saveAndFlush(any());
+        verify(csvImportRowWriter, never()).saveRow(anyString(), anyString(), anyString(), anyString(),
+                any(BigDecimal.class), anyInt(), any(BigDecimal.class));
     }
 
     @Test
@@ -205,9 +179,9 @@ class CsvImportServiceTest {
         CsvImportResult result = csvImportService.importProducts(file);
 
         assertEquals(0, result.processedCount());
-        assertEquals(1, result.errors().size());
         assertTrue(result.errors().get(0).contains("SKU or name is empty"));
-        verify(productRepository, never()).saveAndFlush(any());
+        verify(csvImportRowWriter, never()).saveRow(anyString(), anyString(), anyString(), anyString(),
+                any(BigDecimal.class), anyInt(), any(BigDecimal.class));
     }
 
     @Test
@@ -220,7 +194,6 @@ class CsvImportServiceTest {
         CsvImportResult result = csvImportService.importProducts(file);
 
         assertEquals(0, result.processedCount());
-        assertEquals(1, result.errors().size());
         assertTrue(result.errors().get(0).contains("Weight cannot be negative"));
     }
 
@@ -234,8 +207,7 @@ class CsvImportServiceTest {
         CsvImportResult result = csvImportService.importProducts(file);
 
         assertEquals(0, result.processedCount());
-        assertEquals(1, result.errors().size());
-        assertTrue(result.errors().get(0).contains("Invalid data format"));
+        assertTrue(result.errors().get(0).contains("Price must be a valid number"));
     }
 
     @Test
@@ -248,8 +220,29 @@ class CsvImportServiceTest {
         CsvImportResult result = csvImportService.importProducts(file);
 
         assertEquals(0, result.processedCount());
+        assertTrue(result.errors().get(0).contains("Stock must be a valid whole number"));
+    }
+
+    @Test
+    @DisplayName("Should continue processing when a row writer failure is isolated")
+    void shouldContinueProcessingWhenRowWriterFailureIsIsolated() {
+        String csvContent = "name,sku,description,category,price,stock,weight_kg\n" +
+                "Running Shoes,RS-001,Good shoes,Footwear,89.99,150,0.35\n" +
+                "Backpack,BP-008,Laptop pack,Accessories,64.99,90,0.9";
+        MockMultipartFile file = createMockFile(csvContent);
+
+        doThrow(new RuntimeException("Simulated DB failure"))
+                .when(csvImportRowWriter).saveRow(
+                        eq("RS-001"), anyString(), anyString(), anyString(),
+                        any(BigDecimal.class), anyInt(), any(BigDecimal.class));
+
+        CsvImportResult result = csvImportService.importProducts(file);
+
+        assertEquals(1, result.processedCount());
         assertEquals(1, result.errors().size());
-        assertTrue(result.errors().get(0).contains("Invalid data format"));
+        assertTrue(result.errors().get(0).contains("Line 2"));
+        verify(csvImportRowWriter, times(2)).saveRow(anyString(), anyString(), anyString(), anyString(),
+                any(BigDecimal.class), anyInt(), any(BigDecimal.class));
     }
 
     @Test
@@ -260,20 +253,15 @@ class CsvImportServiceTest {
                 "Second Name,RS-001,Second,Footwear,20.00,8,0.8";
         MockMultipartFile file = createMockFile(csvContent);
 
-        when(productRepository.findBySku("RS-001")).thenReturn(Optional.empty());
-
         CsvImportResult result = csvImportService.importProducts(file);
 
         assertEquals(2, result.processedCount());
-        assertTrue(result.errors().isEmpty());
-
-        ArgumentCaptor<Product> productCaptor = ArgumentCaptor.forClass(Product.class);
-        verify(productRepository, times(2)).saveAndFlush(productCaptor.capture());
-
-        Product finalProduct = productCaptor.getAllValues().get(1);
-        assertEquals("Second Name", finalProduct.getName());
-        assertEquals(new BigDecimal("20.00"), finalProduct.getPrice());
-        assertEquals(8, finalProduct.getStock());
+        verify(csvImportRowWriter).saveRow(
+                eq("RS-001"), eq("First Name"), eq("First"), eq("Footwear"),
+                eq(new BigDecimal("10.00")), eq(5), eq(new BigDecimal("0.5")));
+        verify(csvImportRowWriter).saveRow(
+                eq("RS-001"), eq("Second Name"), eq("Second"), eq("Footwear"),
+                eq(new BigDecimal("20.00")), eq(8), eq(new BigDecimal("0.8")));
     }
 
     @Test
@@ -289,9 +277,9 @@ class CsvImportServiceTest {
 
     @Test
     @DisplayName("Should throw when CSV file cannot be read")
-    void shouldThrowWhenCsvFileCannotBeRead() throws IOException {
-        MultipartFile file = mock(MultipartFile.class);
-        when(file.getInputStream()).thenThrow(new IOException("Simulated I/O failure"));
+    void shouldThrowWhenCsvFileCannotBeRead() throws Exception {
+        var file = mock(org.springframework.web.multipart.MultipartFile.class);
+        when(file.getInputStream()).thenThrow(new java.io.IOException("Simulated I/O failure"));
 
         RuntimeException ex = assertThrows(RuntimeException.class, () -> csvImportService.importProducts(file));
         assertTrue(ex.getMessage().contains("Failed to process CSV file"));

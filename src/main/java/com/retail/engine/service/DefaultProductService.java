@@ -2,6 +2,7 @@ package com.retail.engine.service;
 
 import com.retail.engine.dto.ProductRequest;
 import com.retail.engine.model.Product;
+import com.retail.engine.repository.OrderItemRepository;
 import com.retail.engine.repository.ProductRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -18,9 +19,11 @@ public class DefaultProductService implements ProductService {
     static final int MAX_PAGE_SIZE = 100;
 
     private final ProductRepository productRepository;
+    private final OrderItemRepository orderItemRepository;
 
-    public DefaultProductService(ProductRepository productRepository) {
+    public DefaultProductService(ProductRepository productRepository, OrderItemRepository orderItemRepository) {
         this.productRepository = productRepository;
+        this.orderItemRepository = orderItemRepository;
     }
 
     @Override
@@ -33,8 +36,15 @@ public class DefaultProductService implements ProductService {
             return productRepository.findAll(pageable);
         }
 
-        String term = search.trim();
-        return productRepository.findByNameContainingIgnoreCaseOrSkuContainingIgnoreCase(term, term, pageable);
+        String term = escapeLikeTerm(search.trim());
+        return productRepository.searchByNameOrSku(term, term, pageable);
+    }
+
+    public static String escapeLikeTerm(String term) {
+        return term
+                .replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_");
     }
 
     @Override
@@ -46,14 +56,15 @@ public class DefaultProductService implements ProductService {
     @Override
     public Product createProduct(ProductRequest request) {
         Product product = new Product();
-        applyRequest(product, request);
+        product.setSku(request.sku());
+        applyMutableFields(product, request);
         return productRepository.save(product);
     }
 
     @Override
     public Product updateProduct(Long id, ProductRequest request) {
         Product product = getProduct(id);
-        applyRequest(product, request);
+        applyMutableFields(product, request);
         return productRepository.save(product);
     }
 
@@ -62,11 +73,14 @@ public class DefaultProductService implements ProductService {
         if (!productRepository.existsById(id)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Product not found.");
         }
+        if (orderItemRepository.existsByProduct_Id(id)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Cannot delete product because it has existing purchase history.");
+        }
         productRepository.deleteById(id);
     }
 
-    private void applyRequest(Product product, ProductRequest request) {
-        product.setSku(request.sku());
+    private void applyMutableFields(Product product, ProductRequest request) {
         product.setName(request.name());
         product.setDescription(request.description());
         product.setCategory(request.category());

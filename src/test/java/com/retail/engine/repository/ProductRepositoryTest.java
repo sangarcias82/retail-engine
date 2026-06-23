@@ -1,6 +1,7 @@
 package com.retail.engine.repository;
 
 import com.retail.engine.model.Product;
+import com.retail.engine.service.DefaultProductService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -51,13 +52,13 @@ class ProductRepositoryTest {
         productRepository.save(buildProduct("RS-001", "Running Shoes"));
 
         List<Product> byName = productRepository
-                .findByNameContainingIgnoreCaseOrSkuContainingIgnoreCase("mouse", "mouse", PageRequest.of(0, 10))
+                .searchByNameOrSku("mouse", "mouse", PageRequest.of(0, 10))
                 .getContent();
         assertEquals(1, byName.size());
         assertEquals("WM-042", byName.get(0).getSku());
 
         List<Product> bySku = productRepository
-                .findByNameContainingIgnoreCaseOrSkuContainingIgnoreCase("RS-001", "RS-001", PageRequest.of(0, 10))
+                .searchByNameOrSku("RS-001", "RS-001", PageRequest.of(0, 10))
                 .getContent();
         assertEquals(1, bySku.size());
         assertEquals("Running Shoes", bySku.get(0).getName());
@@ -98,15 +99,28 @@ class ProductRepositoryTest {
         productRepository.save(buildProduct("PG-003", "Gamma Gadget"));
 
         Page<Product> firstPage = productRepository
-                .findByNameContainingIgnoreCaseOrSkuContainingIgnoreCase("gadget", "gadget", PageRequest.of(0, 2));
+                .searchByNameOrSku("gadget", "gadget", PageRequest.of(0, 2));
         Page<Product> secondPage = productRepository
-                .findByNameContainingIgnoreCaseOrSkuContainingIgnoreCase("gadget", "gadget", PageRequest.of(1, 2));
+                .searchByNameOrSku("gadget", "gadget", PageRequest.of(1, 2));
 
         assertEquals(2, firstPage.getContent().size());
         assertEquals(3, firstPage.getTotalElements());
         assertEquals(2, firstPage.getTotalPages());
         assertEquals(1, secondPage.getContent().size());
         assertTrue(secondPage.isLast());
+    }
+
+    @Test
+    @DisplayName("Should treat LIKE wildcard characters literally when patterns are escaped")
+    void shouldTreatLikeWildcardsLiterallyWhenPatternsAreEscaped() {
+        productRepository.save(buildProduct("PCT-001", "100% Cotton"));
+        productRepository.save(buildProduct("PLN-001", "Plain Shirt"));
+
+        String escapedTerm = DefaultProductService.escapeLikeTerm("100%");
+        Page<Product> results = productRepository.searchByNameOrSku(escapedTerm, escapedTerm, PageRequest.of(0, 10));
+
+        assertEquals(1, results.getTotalElements());
+        assertEquals("PCT-001", results.getContent().get(0).getSku());
     }
 
     @Test
