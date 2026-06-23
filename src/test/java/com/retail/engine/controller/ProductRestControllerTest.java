@@ -17,6 +17,7 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.MockMvc;
@@ -163,6 +164,19 @@ class ProductRestControllerTest {
         mockMvc.perform(delete("/api/v1/products/1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.message", is("Product deleted successfully!")));
+    }
+
+    @Test
+    @DisplayName("Should return 409 when delete is blocked by purchase history")
+    void shouldReturnConflictWhenDeleteIsBlockedByPurchaseHistory() throws Exception {
+        doThrow(new org.springframework.web.server.ResponseStatusException(
+                HttpStatus.CONFLICT, "Cannot delete product because it has existing purchase history."))
+                .when(productService).deleteProduct(18L);
+
+        mockMvc.perform(delete("/api/v1/products/18"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message",
+                        is("Cannot delete product because it has existing purchase history.")));
     }
 
     @Test

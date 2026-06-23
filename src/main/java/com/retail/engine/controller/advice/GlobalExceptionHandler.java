@@ -3,6 +3,7 @@ package com.retail.engine.controller.advice;
 import com.retail.engine.dto.ErrorResponse;
 import com.retail.engine.dto.ValidationErrorResponse;
 import com.retail.engine.service.PurchaseException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
@@ -30,13 +31,18 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(PurchaseException.class)
     public ResponseEntity<ErrorResponse> handlePurchaseException(PurchaseException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
-                .body(new ErrorResponse(
-                        "Insufficient stock available or inventory changed. Please try again."));
+                .body(new ErrorResponse(ex.getMessage()));
     }
 
     @ExceptionHandler(ResponseStatusException.class)
     public ResponseEntity<ErrorResponse> handleResponseStatusException(ResponseStatusException ex) {
         return ResponseEntity.status(ex.getStatusCode())
                 .body(new ErrorResponse(ex.getReason() != null ? ex.getReason() : "Request failed"));
+    }
+
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ErrorResponse> handleDataIntegrityViolation(DataIntegrityViolationException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(new ErrorResponse("Operation cannot be completed due to existing related records."));
     }
 }

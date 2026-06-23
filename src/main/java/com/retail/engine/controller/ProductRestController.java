@@ -97,7 +97,8 @@ public class ProductRestController {
     @Operation(summary = "Delete a product")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Product deleted"),
-            @ApiResponse(responseCode = "404", description = "Product not found")
+            @ApiResponse(responseCode = "404", description = "Product not found"),
+            @ApiResponse(responseCode = "409", description = "Product has existing purchase history")
     })
     public MessageResponse deleteProduct(@PathVariable Long id) {
         productService.deleteProduct(id);
@@ -114,10 +115,10 @@ public class ProductRestController {
     }
 
     @PostMapping("/purchase")
-    @Operation(summary = "Purchase a product", description = "Simulates checkout: locks the product row for update, decrements stock with optimistic locking, and creates an order.")
+    @Operation(summary = "Purchase a product", description = "Simulates checkout: acquires a pessimistic row lock, decrements stock, and creates an order.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Purchase completed"),
-            @ApiResponse(responseCode = "409", description = "Insufficient stock or concurrent conflict")
+            @ApiResponse(responseCode = "409", description = "Insufficient stock, invalid quantity, or product not found")
     })
     public MessageResponse purchase(@Valid @RequestBody PurchaseRequest request) {
         purchaseService.purchase(request.productId(), request.quantity());
