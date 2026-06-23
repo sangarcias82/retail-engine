@@ -1,6 +1,7 @@
 package com.retail.engine.service;
 
 import com.retail.engine.dto.ProductRequest;
+import com.retail.engine.dto.UpdateProductRequest;
 import com.retail.engine.model.Product;
 import com.retail.engine.repository.OrderItemRepository;
 import com.retail.engine.repository.ProductRepository;
@@ -57,12 +58,12 @@ public class DefaultProductService implements ProductService {
     public Product createProduct(ProductRequest request) {
         Product product = new Product();
         product.setSku(request.sku());
-        applyMutableFields(product, request);
+        applyMutableFields(product, toUpdateRequest(request));
         return productRepository.save(product);
     }
 
     @Override
-    public Product updateProduct(Long id, ProductRequest request) {
+    public Product updateProduct(Long id, UpdateProductRequest request) {
         Product product = getProduct(id);
         applyMutableFields(product, request);
         return productRepository.save(product);
@@ -80,12 +81,22 @@ public class DefaultProductService implements ProductService {
         productRepository.deleteById(id);
     }
 
-    private void applyMutableFields(Product product, ProductRequest request) {
+    private void applyMutableFields(Product product, UpdateProductRequest request) {
         product.setName(request.name());
         product.setDescription(request.description());
         product.setCategory(request.category());
         product.setPrice(request.price());
         product.setStock(request.stock());
         product.setWeightKg(request.weightKg());
+    }
+
+    private UpdateProductRequest toUpdateRequest(ProductRequest request) {
+        return new UpdateProductRequest(
+                request.name(),
+                request.description(),
+                request.category(),
+                request.price(),
+                request.stock(),
+                request.weightKg());
     }
 }

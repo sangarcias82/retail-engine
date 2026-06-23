@@ -11,12 +11,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
-import java.util.concurrent.atomic.AtomicLong;
 
 @Service
 public class DefaultPurchaseService implements PurchaseService {
-
-    private static final AtomicLong ORDER_SEQUENCE = new AtomicLong(1);
 
     private final ProductRepository productRepository;
     private final OrderRepository orderRepository;
@@ -58,7 +55,20 @@ public class DefaultPurchaseService implements PurchaseService {
 
     private String generateOrderNumber() {
         String datePart = LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE);
-        long sequence = ORDER_SEQUENCE.getAndIncrement();
-        return "ORD-" + datePart + "-" + String.format("%03d", sequence);
+        String prefix = "ORD-" + datePart + "-";
+        long sequence = orderRepository.findTopByOrderNumberStartingWithOrderByOrderNumberDesc(prefix)
+                .map(Order::getOrderNumber)
+                .map(orderNumber -> orderNumber.substring(prefix.length()))
+                .map(this::parseOrderSequence)
+                .orElse(0L) + 1;
+        return prefix + String.format("%03d", sequence);
+    }
+
+    private long parseOrderSequence(String suffix) {
+        try {
+            return Long.parseLong(suffix);
+        } catch (NumberFormatException ex) {
+            return 0L;
+        }
     }
 }

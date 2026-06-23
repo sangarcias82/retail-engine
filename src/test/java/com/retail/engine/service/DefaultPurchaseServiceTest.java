@@ -18,12 +18,15 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.startsWith;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -58,6 +61,8 @@ class DefaultPurchaseServiceTest {
         Product product = buildProduct(1L, 10, new BigDecimal("29.99"));
         when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
         when(productRepository.save(product)).thenReturn(product);
+        when(orderRepository.findTopByOrderNumberStartingWithOrderByOrderNumberDesc(startsWith("ORD-")))
+                .thenReturn(Optional.empty());
 
         purchaseService.purchase(1L, 3);
 
@@ -84,6 +89,8 @@ class DefaultPurchaseServiceTest {
         Product product = buildProduct(1L, 5, new BigDecimal("10.00"));
         when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
         when(productRepository.save(product)).thenReturn(product);
+        when(orderRepository.findTopByOrderNumberStartingWithOrderByOrderNumberDesc(startsWith("ORD-")))
+                .thenReturn(Optional.empty());
 
         purchaseService.purchase(1L, 5);
 
@@ -117,6 +124,26 @@ class DefaultPurchaseServiceTest {
         assertEquals(2, product.getStock());
         verify(productRepository, never()).save(any());
         verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Should increment order number from the latest persisted order for the day")
+    void shouldIncrementOrderNumberFromLatestPersistedOrder() {
+        Product product = buildProduct(1L, 10, new BigDecimal("10.00"));
+        String datePart = LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE);
+        Order latestOrder = new Order();
+        latestOrder.setOrderNumber("ORD-" + datePart + "-007");
+
+        when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
+        when(productRepository.save(product)).thenReturn(product);
+        when(orderRepository.findTopByOrderNumberStartingWithOrderByOrderNumberDesc(startsWith("ORD-")))
+                .thenReturn(Optional.of(latestOrder));
+
+        purchaseService.purchase(1L, 1);
+
+        ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
+        verify(orderRepository).save(orderCaptor.capture());
+        assertTrue(orderCaptor.getValue().getOrderNumber().endsWith("-008"));
     }
 
     @ParameterizedTest

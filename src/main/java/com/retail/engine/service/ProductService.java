@@ -1,6 +1,7 @@
 package com.retail.engine.service;
 
 import com.retail.engine.dto.ProductRequest;
+import com.retail.engine.dto.UpdateProductRequest;
 import com.retail.engine.model.Product;
 import org.springframework.data.domain.Page;
 
@@ -12,7 +13,7 @@ public interface ProductService {
 
     Product createProduct(ProductRequest request);
 
-    Product updateProduct(Long id, ProductRequest request);
+    Product updateProduct(Long id, UpdateProductRequest request);
 
     void deleteProduct(Long id);
 }

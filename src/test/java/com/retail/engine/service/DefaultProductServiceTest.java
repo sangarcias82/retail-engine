@@ -1,6 +1,7 @@
 package com.retail.engine.service;
 
 import com.retail.engine.dto.ProductRequest;
+import com.retail.engine.dto.UpdateProductRequest;
 import com.retail.engine.model.Product;
 import com.retail.engine.repository.OrderItemRepository;
 import com.retail.engine.repository.ProductRepository;
@@ -106,10 +107,18 @@ class DefaultProductServiceTest {
                 5,
                 new BigDecimal("0.400"));
 
+        UpdateProductRequest updateBody = new UpdateProductRequest(
+                updateRequest.name(),
+                updateRequest.description(),
+                updateRequest.category(),
+                updateRequest.price(),
+                updateRequest.stock(),
+                updateRequest.weightKg());
+
         when(productRepository.findById(1L)).thenReturn(Optional.of(existing));
         when(productRepository.save(existing)).thenReturn(existing);
 
-        Product updated = productService.updateProduct(1L, updateRequest);
+        Product updated = productService.updateProduct(1L, updateBody);
 
         assertEquals("RS-001", updated.getSku());
         assertEquals("Updated Shoes", updated.getName());
