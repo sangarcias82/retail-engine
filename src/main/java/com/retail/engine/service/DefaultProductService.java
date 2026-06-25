@@ -56,6 +56,10 @@ public class DefaultProductService implements ProductService {
 
     @Override
     public Product createProduct(ProductRequest request) {
+        if (productRepository.existsBySku(request.sku())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "A product with SKU '" + request.sku() + "' already exists.");
+        }
         Product product = new Product();
         product.setSku(request.sku());
         applyMutableFields(product, toUpdateRequest(request));

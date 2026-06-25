@@ -145,6 +145,22 @@ class DefaultProductServiceTest {
     }
 
     @Test
+    @DisplayName("Should reject create when SKU already exists")
+    void shouldRejectCreateWhenSkuAlreadyExists() {
+        ProductRequest request = new ProductRequest(
+                "RS-001", "Running Shoes", "Desc", "Footwear",
+                new BigDecimal("89.99"), 10, new BigDecimal("0.350"));
+        when(productRepository.existsBySku("RS-001")).thenReturn(true);
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> productService.createProduct(request));
+
+        assertEquals(409, ex.getStatusCode().value());
+        assertEquals("A product with SKU 'RS-001' already exists.", ex.getReason());
+        verify(productRepository, never()).save(any());
+    }
+
+    @Test
     @DisplayName("Should reject delete when product has purchase history")
     void shouldRejectDeleteWhenProductHasPurchaseHistory() {
         when(productRepository.existsById(18L)).thenReturn(true);

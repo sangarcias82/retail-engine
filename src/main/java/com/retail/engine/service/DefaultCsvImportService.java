@@ -1,5 +1,6 @@
 package com.retail.engine.service;
 
+import com.retail.engine.exception.CsvImportException;
 import com.retail.engine.repository.ProductRepository;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
@@ -101,7 +102,7 @@ public class DefaultCsvImportService implements CsvImportService {
 
         } catch (Exception e) {
             log.error("Critical error reading CSV file", e);
-            throw new RuntimeException("Failed to process CSV file: " + e.getMessage());
+            throw new CsvImportException("Failed to process CSV file: " + e.getMessage(), e);
         }
 
         return new CsvImportResult(processedCount, errors);

@@ -4,8 +4,10 @@ import com.retail.engine.model.Order;
 import com.retail.engine.model.OrderItem;
 import com.retail.engine.model.OrderStatus;
 import com.retail.engine.model.Product;
+import com.retail.engine.exception.PurchaseException;
 import com.retail.engine.repository.OrderRepository;
 import com.retail.engine.repository.ProductRepository;
+import org.springframework.http.HttpStatus;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -107,6 +109,7 @@ class DefaultPurchaseServiceTest {
                 () -> purchaseService.purchase(99L, 1));
 
         assertEquals("Product not found.", ex.getMessage());
+        assertEquals(HttpStatus.NOT_FOUND, ex.getStatus());
         verify(productRepository, never()).save(any());
         verify(orderRepository, never()).save(any());
     }
@@ -121,6 +124,7 @@ class DefaultPurchaseServiceTest {
                 () -> purchaseService.purchase(1L, 3));
 
         assertEquals("Insufficient stock available.", ex.getMessage());
+        assertEquals(HttpStatus.CONFLICT, ex.getStatus());
         assertEquals(2, product.getStock());
         verify(productRepository, never()).save(any());
         verify(orderRepository, never()).save(any());
@@ -155,6 +159,7 @@ class DefaultPurchaseServiceTest {
                 () -> purchaseService.purchase(1L, quantity));
 
         assertEquals("Quantity must be greater than zero.", ex.getMessage());
+        assertEquals(HttpStatus.CONFLICT, ex.getStatus());
         verify(productRepository, never()).findByIdForUpdate(any());
     }
 }

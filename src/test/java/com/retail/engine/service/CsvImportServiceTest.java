@@ -1,5 +1,6 @@
 package com.retail.engine.service;
 
+import com.retail.engine.exception.CsvImportException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -281,7 +282,7 @@ class CsvImportServiceTest {
         var file = mock(org.springframework.web.multipart.MultipartFile.class);
         when(file.getInputStream()).thenThrow(new java.io.IOException("Simulated I/O failure"));
 
-        RuntimeException ex = assertThrows(RuntimeException.class, () -> csvImportService.importProducts(file));
+        CsvImportException ex = assertThrows(CsvImportException.class, () -> csvImportService.importProducts(file));
         assertTrue(ex.getMessage().contains("Failed to process CSV file"));
     }
 }

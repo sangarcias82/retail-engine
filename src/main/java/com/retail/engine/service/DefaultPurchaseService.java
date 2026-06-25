@@ -6,6 +6,8 @@ import com.retail.engine.model.OrderStatus;
 import com.retail.engine.model.Product;
 import com.retail.engine.repository.OrderRepository;
 import com.retail.engine.repository.ProductRepository;
+import com.retail.engine.exception.PurchaseException;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,14 +29,14 @@ public class DefaultPurchaseService implements PurchaseService {
     @Transactional
     public void purchase(Long productId, Integer quantity) {
         if (quantity == null || quantity <= 0) {
-            throw new PurchaseException("Quantity must be greater than zero.");
+            throw new PurchaseException("Quantity must be greater than zero.", HttpStatus.CONFLICT);
         }
 
         Product product = productRepository.findByIdForUpdate(productId)
-                .orElseThrow(() -> new PurchaseException("Product not found."));
+                .orElseThrow(() -> new PurchaseException("Product not found.", HttpStatus.NOT_FOUND));
 
         if (product.getStock() < quantity) {
-            throw new PurchaseException("Insufficient stock available.");
+            throw new PurchaseException("Insufficient stock available.", HttpStatus.CONFLICT);
         }
 
         product.setStock(product.getStock() - quantity);
