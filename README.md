@@ -13,6 +13,7 @@
 - [Architectural Decisions and Technical Stack](#architectural-decisions)
 - [Features](#features)
 - [Future Enhancements](#future-enhancements)
+  - [Strategic refactors](#strategic-refactors)
 - [Test Suite](#test-suite)
 - [Local Setup and Execution Guide](#local-setup)
 - [Application Tour](#application-tour)
@@ -23,40 +24,23 @@
 <a id="executive-summary"></a>
 ## Executive Summary
 
-A production-minded e-commerce product catalog built on the Java ecosystem. The application delivers full product CRUD, 
-live search, a transaction-safe purchase flow, resilient CSV bulk import, and a containerized deployment — all behind a 
-unified REST API with a lightweight Thymeleaf + `fetch` frontend with:
+A production-minded product catalog on Java 21, Spring Boot 3, and PostgreSQL. Full CRUD, search, CSV import, and transaction-safe checkout behind a unified REST API, with Thymeleaf + `fetch` for the UI.
 
-- Java 21
-- Spring Boot 3
-- PostgreSQL
-- Docker
-- OpenAPI / Swagger
-- Pessimistic Locking (checkout)
-- CSV Bulk Import
+- Java 21 · Spring Boot 3 · PostgreSQL · Docker · OpenAPI
+- Pessimistic locking at checkout · Resilient CSV import · 61 automated tests
 
-**Features:**
-
-- Product CRUD
-- Product Search
-- CSV Import
-- Simulated Checkout
-- Automated Testing (56 tests)
-
-Designed with a **REST-first architecture** and production-oriented concerns such as idempotent imports, inventory concurrency control via pessimistic row locking at checkout, and isolated test execution (H2 in-memory for `./mvnw test`, PostgreSQL in Docker for runtime).
+REST-first design: idempotent imports, row-level stock locking, H2 for `./mvnw test`, PostgreSQL in Docker at runtime.
 
 ---
 
 <a id="sample-data"></a>
 ## Sample Data
 
-The repository includes a realistic product catalog CSV with intentional edge cases (negative stock, blank fields, duplicate SKUs) to exercise the import pipeline:
+Repo includes `sample-products.csv` with edge cases (negative stock, blanks, duplicate SKUs):
 
 * **Provided CSV File Download Date/Time:** Friday, June 19, 2026, at 1:09 PM.
-* **Root copy:** `sample-products.csv`
-* **Test fixture:** `src/test/resources/sample-products.csv`
-
-Use either file when trying bulk import from the UI or when running the integration tests.
+* **Root:** `sample-products.csv`
+* **Tests:** `src/test/resources/sample-products.csv`
 
 ---
 
@@ -79,12 +63,12 @@ The application follows a **single REST API + thin presentation layer** pattern:
 <a id="concurrent-purchase-flow"></a>
 ## Concurrent Purchase Flow (Pessimistic Locking)
 
-When two clients attempt to purchase the last unit of stock simultaneously, the checkout path acquires a **pessimistic write lock** on the product row (`findByIdForUpdate` → `SELECT … FOR UPDATE`). Concurrent purchase attempts on the same product are serialized at the database level until the active transaction completes, preventing overselling without relying on client retries. The `@Version` field remains on `Product` as an entity-level safeguard for other update paths.
+When two clients buy the last unit at once, checkout locks the product row (`findByIdForUpdate` → `SELECT … FOR UPDATE`). Concurrent attempts serialize at the DB; `@Version` on `Product` is a fallback for other updates.
 
 ![Concurrent Purchase Flow — serialized checkout under parallel purchase requests](docs/diagrams/concurrent-purchase-flow.png)
 
-* **The problem:** Two users hit **Purchase** at the same millisecond for a product with only one unit left.
-* **The solution:** Stock decrement runs inside a transaction after acquiring a row-level write lock (`SELECT … FOR UPDATE`). A concurrent checkout on the same product waits until the lock is released; it then completes successfully or fails with **insufficient stock** if the prior transaction consumed the remaining units — no overselling, no client retry loop for version conflicts.
+* **Problem:** two clients purchase the last unit at once.
+* **Solution:** `SELECT … FOR UPDATE` inside a transaction — concurrent checkouts serialize; the second succeeds or gets insufficient stock.
 
 ---
 
@@ -101,9 +85,7 @@ When two clients attempt to purchase the last unit of stock simultaneously, the 
 
 ### Domain Design
 
-Although payments are simulated, purchases are persisted through an **Order / OrderItem** model.
-
-This preserves transactional history, allows auditability, and establishes a foundation for future features such as order history, refunds, invoicing, and payment gateway integration.
+Payments are simulated, but each purchase creates an **Order** with **OrderItem** snapshots (product, quantity, price at checkout). That gives audit history and a base for order lists, refunds, or a real payment gateway later.
 
 ---
 
@@ -116,11 +98,11 @@ All business operations are exposed through a single versioned controller. The U
 |--------|------|---------|-------------------|
 | `GET` | `/api/v1/products` | List or search the catalog | Optional query `?search=` (name or SKU, case-insensitive partial match), `?page=` (default `0`), `?size=` (default `12`, max `100`). Returns a Spring Data `Page` JSON payload (`content`, `totalElements`, `totalPages`, etc.). |
 | `GET` | `/api/v1/products/{id}` | Retrieve a single product by primary key | Returns `Product` JSON. `404` if not found. |
-| `POST` | `/api/v1/products` | Create a new product | JSON body (`ProductRequest`). Returns `201 Created` with the persisted entity. |
+| `POST` | `/api/v1/products` | Create a new product | JSON body (`ProductRequest`). Returns `201 Created` with the persisted entity. `409` if the SKU already exists. |
 | `PUT` | `/api/v1/products/{id}` | Update product metadata in place | JSON body (`UpdateProductRequest` — no `sku` field). Updates name, description, category, price, stock, and weight. SKU is immutable after creation. |
 | `DELETE` | `/api/v1/products/{id}` | Remove a product from the catalog | Returns a success message. `404` if not found. `409` if the product has existing purchase history in `order_items`. |
-| `POST` | `/api/v1/products/import` | Bulk CSV ingestion pipeline | `multipart/form-data` with a `file` field (max **10 MB**). Returns processed count and line-level errors. Upserts by SKU. |
-| `POST` | `/api/v1/products/purchase` | Simulated checkout / stock decrement | JSON body `{ "productId": number, "quantity": number }`. Returns order confirmation or `409 Conflict` when stock is insufficient. |
+| `POST` | `/api/v1/products/import` | Bulk CSV ingestion pipeline | `multipart/form-data` with a `file` field (max **10 MB**, must not be empty). Returns processed count and line-level errors. Upserts by SKU. `400` if the file is missing or empty; `422` if the file cannot be read. |
+| `POST` | `/api/v1/products/purchase` | Simulated checkout / stock decrement | JSON body `{ "productId": number, "quantity": number }`. Returns order confirmation, `404` when the product does not exist, or `409 Conflict` when stock is insufficient or quantity is invalid. |
 
 **Interactive documentation:** http://localhost:8080/swagger-ui.html
 
@@ -143,13 +125,13 @@ All business operations are exposed through a single versioned controller. The U
 | Path | Purpose |
 |------|---------|
 | `pom.xml` | Maven build definition: Spring Boot 3.3, Java 21, JPA, Thymeleaf, Validation, PostgreSQL, Apache Commons CSV |
-| `Dockerfile` | Multi-stage image build (JDK 21 → JRE 21) producing a runnable Spring Boot JAR |
-| `docker-compose.yml` | Orchestrates PostgreSQL (with healthcheck) and the application on a shared network |
+| `Dockerfile` | Multi-stage image build (JDK 21 → JRE 21) with `./mvnw package` (tests run during image build) |
+| `docker-compose.yml` | Orchestrates PostgreSQL (with healthcheck) and the application (with Actuator healthcheck) on a shared network |
 | `docs/diagrams/` | Architecture diagrams, UI screenshots, and Swagger UI reference images for this README |
 | `mvnw` / `mvnw.cmd` | Maven Wrapper to build and test without a global Maven installation |
-| `src/main/java/com/retail/engine/` | Application source (`controller`, `dto`, `service`, `model`, `repository`, `config`) |
+| `src/main/java/com/retail/engine/` | Application source (`controller`, `dto`, `service`, `model`, `repository`, `config`, `exception`) |
 | `src/main/resources/static/js/api.js` | Shared fetch helpers for the UI client |
-| `src/main/resources/templates/products/` | Thymeleaf HTML shells (catalog, form) — Bootstrap 5 via CDN |
+| `src/main/resources/templates/products/` | Thymeleaf HTML shells (catalog, form) sharing `fragments/layout.html` — Bootstrap 5 via CDN |
 | `src/test/java/com/retail/engine/` | Automated test suite (service, web, persistence, and integration tests) |
 | `src/test/resources/sample-products.csv` | Sample catalog CSV used by integration tests |
 
@@ -160,8 +142,7 @@ All business operations are exposed through a single versioned controller. The U
 
 ### 1. Core Stack
 
-* **Backend:** **Java 21** + **Spring Boot 3.x**
-    * *Decision:* Chosen for maximum reliability, strong typing, and industry-standard dependency injection. Virtual Threads (Project Loom) are enabled to process blocking I/O tasks efficiently.
+* **Backend:** **Java 21** + **Spring Boot 3.x** — strong typing, mature ecosystem, Virtual Threads enabled for blocking I/O.
 
 #### Why Java 21 instead of Java 25?
 
@@ -175,60 +156,45 @@ Although Java 25 is available, this project intentionally targets **Java 21 LTS*
 | **Testing toolchain** | Mockito + Byte Buddy mock concrete classes and interfaces without extra flags. | Running the test suite on JDK 25 required workarounds (e.g. extracting service interfaces) because Mockito cannot reliably mock concrete classes on the newest bytecode yet. |
 | **Features needed** | Virtual Threads, records, pattern matching, and sequenced collections — all capabilities this application relies on are already present. | No Java 25-specific feature is needed here; upgrading would add risk without functional gain. |
 
-**Summary:** Java 21 delivers the modern concurrency model (Virtual Threads) and language features this app needs, while maximizing stability for Docker deployments, dependency compatibility, and a friction-free `./mvnw test` experience. The bytecode target remains 21 even if a developer runs Maven with a newer JDK locally.
+**Summary:** Java 21 LTS balances modern features (Virtual Threads, records) with stable Spring Boot 3.3 and Docker support. Bytecode target stays 21 even if Maven runs on a newer JDK locally.
 
-* **Database:** **PostgreSQL**
-    * *Decision:* True enterprise applications require absolute consistency for commercial numbers, transactions, and inventories. Relational PostgreSQL ensures ACID compliance, preventing financial or inventory anomalies.
-    * *Alternatives considered:* NoSQL was evaluated for schema flexibility, but the fixed tabular CSV structure and transaction-safe purchase flow require ACID guarantees. PostgreSQL plus pessimistic row locking at checkout was selected to prevent inventory race conditions without client-side retry loops.
-* **User Interface:** **Thymeleaf shells + Bootstrap 5 (CDN) + native `fetch`**
-    * *Decision:* Thymeleaf renders lightweight HTML pages with no server-side business state. All data flows through the unified REST API, eliminating duplicated controller logic.
+* **Database:** **PostgreSQL** — ACID transactions for inventory and orders. Pessimistic row locking at checkout prevents overselling without client retries.
+* **User Interface:** **Thymeleaf shells + Bootstrap 5 (CDN) + `fetch`** — server renders HTML layout only; all data and mutations go through the REST API.
 
-#### Why Thymeleaf as a decoupled presentation shell?
+#### Why Thymeleaf instead of a SPA framework?
 
-This is a deliberate **REST-first hybrid architecture** — also described as an **SPA approach with SSR**: the server delivers the initial HTML shell (Server-Side Rendering), while every dynamic operation runs in the browser through asynchronous JSON calls to `ProductRestController`.
-
-In enterprise architecture reviews, this pattern is formally known as **Layer Decoupling within a Monolith**: the monolith ships as one deployable unit, but internal boundaries behave like a microservice-style API surface.
+**REST-first hybrid:** the server delivers HTML shells (SSR first paint); the browser handles all dynamic work via `fetch` against `ProductRestController`. One deployable unit, API-shaped internal boundaries.
 
 | Layer | Role | Technology |
 |-------|------|------------|
-| **Presentation** | HTML layout, navigation, forms, client-side rendering | Thymeleaf shells + Bootstrap + `fetch` |
-| **API contract** | Business operations exposed as JSON | `ProductRestController` (`/api/v1/products`) |
-| **Domain & persistence** | Rules, transactions, data access | Services + JPA + PostgreSQL |
+| **Presentation** | Layout, navigation, client rendering | Thymeleaf + Bootstrap + `fetch` |
+| **API** | Business operations as JSON | `ProductRestController` |
+| **Domain** | Rules, transactions, persistence | Services + JPA + PostgreSQL |
 
-* **Frontend Engineering Efficiency & Operational Simplicity:**
+No React/Angular/Vue build chain — scope is catalog and ingestion, not a rich client. CRUD, search, import, and purchase live once in the REST layer; `PageController` only maps URLs to templates. Swagger documents the contract for any future frontend swap.
 
-The project consciously avoids introducing a dedicated Node.js-based Single Page Application (SPA) framework (such as React, Angular, or Vue) to align with the core catalog and ingestion scope of this architecture. This decision represents a deliberate engineering trade-off: by leveraging native browser capabilities (`fetch()`) and lightweight Thymeleaf shells, the application eliminates the compilation overhead, supply-chain dependency risks, and deployment complexity typical of modern frontend toolchains. This approach prioritizes engineering effort toward backend transaction integrity, API contract design, and ingestion resilience while keeping the presentation layer intentionally lightweight.
-
-**Benefits of the hybrid client**
-
-* **No duplicated controller logic** — CRUD, search, import, and purchase exist once in the REST layer; Thymeleaf pages never re-implement them.
-* **Clear separation of concerns** — `PageController` only maps URLs to static templates; the API owns all state mutations and validation responses.
-* **Progressive enhancement** — pages are real URLs (`/products`, `/products/new`) with SSR shells for fast first paint; interactivity is added client-side via native `fetch` without a heavy JS framework.
-* **Documented contract** — Swagger UI exposes the full API for any consumer beyond the built-in UI.
-
-* **API Documentation:** **SpringDoc OpenAPI 3 + Swagger UI**
-    * *Decision:* A single documented contract at `/swagger-ui.html` serves API consumers, frontend clients, and external integrations.
+* **API docs:** **SpringDoc OpenAPI 3 + Swagger UI** at `/swagger-ui.html`
 
 ### 2. High-Concurrency Strategy (Race Conditions on Purchase)
 
-See the [Concurrent Purchase Flow (Pessimistic Locking)](#concurrent-purchase-flow) diagram for the end-to-end sequence. The checkout path acquires a **pessimistic write lock** on read (`findByIdForUpdate`) so concurrent purchase attempts on the same product are serialized at the database level. The `@Version` column on `Product` remains as an entity-level safeguard for non-checkout updates.
+See [Concurrent Purchase Flow](#concurrent-purchase-flow). Checkout uses `findByIdForUpdate` — same product, same time, serialized at the DB. `@Version` covers non-checkout updates.
 
 ### 3. Catalog Search and Pagination
 
-* **Partial search:** The repository uses escaped `LIKE '%term%'` queries (`ESCAPE '\\'`) so user-supplied `%` and `_` characters are matched literally rather than as SQL wildcards.
-* **Production scaling:** At high volume, leading-wildcard `LIKE` patterns bypass standard B-Tree indexes in PostgreSQL. A production rollout would migrate search to **`pg_trgm` trigram indexes** or **Full-Text Search**, while keeping prefix search (`StartingWith` → `LIKE 'term%'`) where index-friendly lookups are enough.
-* **Pagination:** The catalog API returns a paginated `Page<Product>` (default `size=12`) so the UI never loads an unbounded product list into memory.
+* **Partial search:** Escaped `LIKE '%term%'` (`ESCAPE '\\'`) — `%` and `_` in user input match literally.
+* **Scaling:** Leading-wildcard `LIKE` won't use B-tree indexes; `pg_trgm` or FTS is the next step at volume.
+* **Pagination:** `Page<Product>` with default `size=12`, max `100`.
 
-### 4. Resilient Ingestion Pipeline (Data Cleansing and Security)
+### 4. CSV Ingestion Pipeline
 
-The ingestion service (`DefaultCsvImportService`) utilizes **Apache Commons CSV** and delegates each valid row to `DefaultCsvImportRowWriter` under a strict defensive pipeline:
+`DefaultCsvImportService` + `DefaultCsvImportRowWriter`:
 
-* **Upsert Idempotency:** If an imported SKU already exists in the database, it behaves as an *Update* instead of duplicating data.
-* **Per-row transactions:** Each persisted row runs in `@Transactional(propagation = REQUIRES_NEW)` so a database failure on one line cannot roll back previously committed valid rows.
-* **Data Cleansing:** Removes currency symbols (`$29.99` → `29.99`), interprets `"free"` as zero price, and ignores blank rows.
-* **Partial Fault Tolerance:** Invalid rows are skipped with line-level error reporting; valid rows continue processing. The catalog UI uses a **warning** summary when both processed rows and line errors are present.
-* **Upload size limits:** `spring.servlet.multipart.max-file-size=10MB` and `max-request-size=10MB` reject oversized uploads at the Tomcat layer before the CSV pipeline runs, mitigating accidental or malicious large-file DoS against the container.
-* **XSS and SQL Injection Defense:** Parameterized JPA queries, JSON API responses, and client-side `escapeHtml()` when rendering catalog cards mitigate injection vectors from dirty CSV data.
+* **Upsert by SKU** — existing rows update in place.
+* **Per-row `REQUIRES_NEW`** — one bad row doesn't roll back prior commits.
+* **Cleansing** — strips `$`, treats `"free"` as zero, skips blank rows.
+* **Line-level errors** — invalid rows reported; valid rows continue.
+* **Upload cap** — 10 MB multipart limit at Tomcat.
+* **Injection defense** — parameterized JPA, JSON responses, `escapeHtml()` in the catalog UI.
 
 ---
 
@@ -244,45 +210,52 @@ The ingestion service (`DefaultCsvImportService`) utilizes **Apache Commons CSV*
 | Simulated purchase | Pessimistic row lock at checkout (`findByIdForUpdate`), persisted `Order` / `OrderItem` |
 | Docker deployment | Multi-stage `Dockerfile` + `docker-compose.yml` |
 | API documentation | SpringDoc OpenAPI + Swagger UI |
-| Automated tests | 56 tests across eight test classes (service, web, persistence, and integration) |
+| Automated tests | 61 tests across eight test classes (service, web, persistence, and integration) |
+| Health endpoint | Spring Boot Actuator at `/actuator/health` (used by Docker Compose healthcheck) |
 
 <a id="future-enhancements"></a>
 ## Future Enhancements
 
-The current version is intentionally focused on catalog, import, and inventory integrity. The following items are natural next steps rather than gaps:
+### Product & operations
 
-| Area | Rationale |
-|------|-----------|
-| **Real payment gateway** (Stripe, PayPal, etc.) | Orders are persisted internally to prove transactional integrity. A payment provider would be added when moving beyond simulated checkout. |
-| **User authentication / authorization** | Endpoints are open in v1 to keep the focus on product and inventory logic. Login, roles, or JWT would be the first security layer in a production rollout. |
-| **Order history UI** | Orders are stored for audit and purchase proof; a customer-facing order list can be built on the existing persistence layer. |
-| **Shopping cart / multi-item checkout** | Purchase is single-product per action today — enough to demonstrate stock control and concurrency handling. |
-| **Full SPA frontend** (React, Angular, etc.) | The REST API is ready for a dedicated frontend; Thymeleaf shells + `fetch` keep v1 simple without a JS build chain. |
-| **Category enum enforcement** | Categories vary widely in real data (`Food & Beverage`, `Home & Office`, etc.). A flexible `String` field handles imports better than a rigid enum. |
-| **Order number generation in clustered deployments** | Checkout uses an in-memory `AtomicLong` sequence (`ORD-YYYYMMDD-###`), which resets on restart and is not shared across containers. Production would move to a database sequence, UUID, or distributed counter while keeping the unique `order_number` constraint. |
-| **Indexed catalog search (`pg_trgm` / FTS)** | Partial search today uses `LIKE '%term%'`, which does not scale on large PostgreSQL catalogs. Trigram indexes (`pg_trgm`) or Full-Text Search would preserve substring UX without sequential scans. |
-| **Email notifications, webhooks, or async messaging** | Post-purchase communication can be layered on once the core flow is stable. |
-| **Cloud deployment** (K8s, AWS, etc.) | Docker Compose covers local and single-host deployment; cloud infra is an operational next step. |
-| **Load / stress tests** | Pessimistic checkout locking is covered by unit and integration tests; dedicated concurrency benchmarks can follow in a hardening phase. |
+| Area | Notes |
+|------|-------|
+| **Payment gateway** (Stripe, PayPal) | Orders already persist; plug in a provider when checkout goes live. |
+| **Order history UI** | `Order` / `OrderItem` tables are ready for a list view. |
+| **Shopping cart** | Multi-item checkout on top of existing stock logic. |
+| **Category enum** | `String` fits messy import data; normalize to enum if categories are controlled. |
+| **Order numbers at scale** | Daily sequence from DB (`ORD-YYYYMMDD-###`); multi-replica needs a sequence or UUID. |
+| **Search indexes** (`pg_trgm` / FTS) | Replace `LIKE '%term%'` sequential scans on large catalogs. |
+| **Notifications** | Email, webhooks, or async messaging post-purchase. |
+| **Cloud deploy** (K8s, AWS) | Beyond Docker Compose single-host. |
+| **Load / stress tests** | Multi-threaded checkout benchmarks. |
+
+<a id="strategic-refactors"></a>
+### Strategic refactors
+
+| Area | Notes |
+|------|-------|
+| **CI/CD** | `./mvnw test` → Docker build → registry push → staged deploy. |
+| **MapStruct layer** | `ProductResponse` etc. — decouple API from JPA entities. |
+| **Auth + rate limiting** | JWT or API keys, roles on mutations, limits on import/purchase. |
+| **Flyway** | Versioned migrations, seeds, rollback plan — replace `ddl-auto=update`. |
+| **Testcontainers** | Integration tests on PostgreSQL, not just H2. |
+| **Batch CSV import** | Chunked transactions (50–100 rows) instead of one TX per row. |
+| **Observability** | Micrometer, OpenTelemetry, structured logging. |
+| **Dedicated frontend** | React/Angular/Vue when UI outgrows Thymeleaf; API won't need changes. |
 
 ---
 
 <a id="test-suite"></a>
 ## Test Suite
 
-The project includes **56 automated tests** across eight test classes covering the service, web, persistence, and integration layers. Run them with:
+The project has **61 tests** in eight classes. Run with `./mvnw test` — JUnit 5, Mockito, Spring Boot Test, H2 for JPA slices.
 
-```bash
-./mvnw test
-```
-
-Tests use **JUnit 5**, **Mockito**, **Spring Boot Test**, and an in-memory **H2** database for JPA slice tests.
-
-**Test vs. production database:** Production runs on **PostgreSQL** (Docker Compose). Tests never connect to it. Spring Boot loads `src/test/resources/application.properties` during `./mvnw test`, which overrides the main datasource with an embedded H2 driver (`jdbc:h2:mem:testdb`). Service and web slice tests use mocks or `@WebMvcTest` and require no database at all — so the full suite runs immediately without Docker.
+Tests use H2 (`src/test/resources/application.properties`); production uses PostgreSQL via Docker. Web and service slice tests use mocks and need no database.
 
 ### 1. Service Layer — `CsvImportServiceTest` (16 tests)
 
-Validates CSV parsing, validation, and row-level error reporting. Persistence is delegated to `CsvImportRowWriter` (mocked).
+Validates CSV parsing and line-level errors (`CsvImportRowWriter` mocked).
 
 | Scenario | Objective |
 |----------|-----------|
@@ -299,7 +272,7 @@ Validates CSV parsing, validation, and row-level error reporting. Persistence is
 | Duplicate SKU in same file | Second row overwrites first within the batch |
 | Row writer failure isolation | A DB failure on one row is reported without aborting subsequent valid rows |
 | Empty file | Zero records processed without crashing |
-| Unreadable file | I/O failure wrapped in `RuntimeException` |
+| Unreadable file | I/O failure wrapped in `CsvImportException` (API returns `422`) |
 
 ### 2. Service Layer — `CsvImportRowWriterTest` (2 tests)
 
@@ -310,9 +283,9 @@ Validates per-row upsert persistence (mocked repository).
 | Insert new SKU | Creates and flushes a new `Product` row |
 | Upsert existing SKU | Updates the existing entity in place by SKU |
 
-### 3. Service Layer — `DefaultPurchaseServiceTest` (7 tests)
+### 3. Service Layer — `DefaultPurchaseServiceTest` (8 tests)
 
-Validates the transactional purchase flow and order creation (mocked repositories).
+Validates purchase flow and order creation (repositories mocked).
 
 | Scenario | Objective |
 |----------|-----------|
@@ -322,9 +295,9 @@ Validates the transactional purchase flow and order creation (mocked repositorie
 | Insufficient stock | Rejected when `quantity > stock` |
 | Invalid quantity | `null`, zero, or negative quantity rejected |
 
-### 4. Service Layer — `DefaultProductServiceTest` (7 tests)
+### 4. Service Layer — `DefaultProductServiceTest` (8 tests)
 
-Validates paginated catalog search orchestration and SKU immutability (mocked repository).
+Validates catalog search and SKU rules (repository mocked).
 
 | Scenario | Objective |
 |----------|-----------|
@@ -333,12 +306,13 @@ Validates paginated catalog search orchestration and SKU immutability (mocked re
 | LIKE wildcard escape | `%`, `_`, and `\` in search terms are escaped before binding |
 | Invalid page/size | Clamps negative page to `0` and oversized page size to max `100` |
 | SKU immutability on update | `PUT` updates mutable fields but preserves the existing SKU |
+| Duplicate SKU on create | `409 Conflict` with a clear message when the SKU already exists |
 | Delete with purchase history | `409 Conflict` when `order_items` reference the product |
 | Delete without history | Product removed when no purchase records exist |
 
-### 5. Web Layer — `ProductRestControllerTest` (11 tests)
+### 5. Web Layer — `ProductRestControllerTest` (14 tests)
 
-Validates the unified JSON API via `@WebMvcTest` + `MockMvc`.
+JSON API via `@WebMvcTest` + `MockMvc`.
 
 | Scenario | Objective |
 |----------|-----------|
@@ -353,10 +327,13 @@ Validates the unified JSON API via `@WebMvcTest` + `MockMvc`.
 | CSV import | `POST /import` multipart |
 | Purchase success | `POST /purchase` → 200 |
 | Insufficient stock on purchase | `POST /purchase` → `409 Conflict` with business error message |
+| Product not found on purchase | `POST /purchase` → `404 Not Found` |
+| Empty CSV import | `POST /import` → `400 Bad Request` |
+| Duplicate SKU on create | `POST` → `409 Conflict` with explicit SKU message |
 
 ### 6. Web Layer — `PageControllerTest` (4 tests)
 
-Validates Thymeleaf shell pages contain no business logic.
+Thymeleaf shells — view names only, no business logic.
 
 | Scenario | Objective |
 |----------|-----------|
@@ -367,7 +344,7 @@ Validates Thymeleaf shell pages contain no business logic.
 
 ### 7. Persistence Layer — `ProductRepositoryTest` (7 tests)
 
-Validates JPA mapping and repository queries against in-memory H2 via `@DataJpaTest`.
+JPA queries against H2 (`@DataJpaTest`).
 
 | Scenario | Objective |
 |----------|-----------|
@@ -379,7 +356,7 @@ Validates JPA mapping and repository queries against in-memory H2 via `@DataJpaT
 | Version increment | `@Version` field increments on each successful update |
 | Find by SKU | Unique SKU lookup returns correct product |
 
-> **Note:** Checkout concurrency is enforced via `findByIdForUpdate` (pessimistic write lock). The `@Version` column on `Product` remains for other update paths. Dedicated multi-threaded stress tests are planned as a future hardening step.
+> Checkout uses `findByIdForUpdate` (pessimistic lock). `@Version` on `Product` covers other update paths.
 
 ### 8. Integration — `SampleProductsCsvImportTest` (2 tests)
 
@@ -430,11 +407,12 @@ The application is fully containerized. You do not need Java, Maven, or PostgreS
 4. Open your browser and navigate to:
     * **Catalog UI:** http://localhost:8080/products
     * **Swagger UI:** http://localhost:8080/swagger-ui.html
+    * **Health check:** http://localhost:8080/actuator/health
 
 <a id="application-tour"></a>
 ## Application Tour
 
-The catalog experience is **REST-first and asynchronous**: the browser never posts traditional form actions to MVC endpoints. Instead, `api.js` sends JSON payloads to `ProductRestController` and re-renders the DOM from the response — no full-page reload on search, import, purchase, or delete.
+The UI calls the REST API via `api.js` — no full-page reloads on search, import, purchase, or delete.
 
 ![Application Tour — product catalog with bulk CSV import, search, and REST-driven UI](docs/diagrams/application-tour.png)
 
@@ -490,4 +468,4 @@ The catalog experience is **REST-first and asynchronous**: the browser never pos
 ./mvnw test
 ```
 
-Expected output: **56 tests, 0 failures**.
+Expected output: **61 tests, 0 failures**.
