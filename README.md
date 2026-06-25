@@ -65,8 +65,6 @@ The application follows a **single REST API + thin presentation layer** pattern:
 
 When two clients buy the last unit at once, checkout locks the product row (`findByIdForUpdate` → `SELECT … FOR UPDATE`). Concurrent attempts serialize at the DB; `@Version` on `Product` is a fallback for other updates.
 
-![Concurrent Purchase Flow — serialized checkout under parallel purchase requests](docs/diagrams/concurrent-purchase-flow.png)
-
 * **Problem:** two clients purchase the last unit at once.
 * **Solution:** `SELECT … FOR UPDATE` inside a transaction — concurrent checkouts serialize; the second succeeds or gets insufficient stock.
 
