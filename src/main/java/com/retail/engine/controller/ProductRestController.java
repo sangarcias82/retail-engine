@@ -19,6 +19,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -31,6 +32,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestController
 @RequestMapping("/api/v1/products")
@@ -112,6 +114,9 @@ public class ProductRestController {
     public CsvImportResult importProducts(
             @Parameter(description = "CSV file with columns: name, sku, description, category, price, stock, weight_kg")
             @RequestParam("file") MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "CSV file is required and must not be empty.");
+        }
         return csvImportService.importProducts(file);
     }
 
@@ -119,7 +124,8 @@ public class ProductRestController {
     @Operation(summary = "Purchase a product", description = "Simulates checkout: acquires a pessimistic row lock, decrements stock, and creates an order.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Purchase completed"),
-            @ApiResponse(responseCode = "409", description = "Insufficient stock, invalid quantity, or product not found")
+            @ApiResponse(responseCode = "404", description = "Product not found"),
+            @ApiResponse(responseCode = "409", description = "Insufficient stock or invalid quantity")
     })
     public MessageResponse purchase(@Valid @RequestBody PurchaseRequest request) {
         purchaseService.purchase(request.productId(), request.quantity());

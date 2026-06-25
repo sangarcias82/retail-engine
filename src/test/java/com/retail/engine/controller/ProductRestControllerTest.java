@@ -7,7 +7,7 @@ import com.retail.engine.model.Product;
 import com.retail.engine.service.CsvImportResult;
 import com.retail.engine.service.CsvImportService;
 import com.retail.engine.service.ProductService;
-import com.retail.engine.service.PurchaseException;
+import com.retail.engine.exception.PurchaseException;
 import com.retail.engine.service.PurchaseService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
@@ -213,7 +213,7 @@ class ProductRestControllerTest {
     @Test
     @DisplayName("Should return 409 when purchase fails")
     void shouldReturnConflictWhenPurchaseFails() throws Exception {
-        doThrow(new PurchaseException("Insufficient stock available."))
+        doThrow(new PurchaseException("Insufficient stock available.", HttpStatus.CONFLICT))
                 .when(purchaseService).purchase(1L, 5);
 
         mockMvc.perform(post("/api/v1/products/purchase")
@@ -223,5 +223,44 @@ class ProductRestControllerTest {
                                 """))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.message").exists());
+    }
+
+    @Test
+    @DisplayName("Should return 404 when purchase targets a missing product")
+    void shouldReturnNotFoundWhenPurchaseProductNotFound() throws Exception {
+        doThrow(new PurchaseException("Product not found.", HttpStatus.NOT_FOUND))
+                .when(purchaseService).purchase(99L, 1);
+
+        mockMvc.perform(post("/api/v1/products/purchase")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"productId":99,"quantity":1}
+                                """))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message", is("Product not found.")));
+    }
+
+    @Test
+    @DisplayName("Should return 400 when CSV import file is empty")
+    void shouldReturnBadRequestWhenImportFileIsEmpty() throws Exception {
+        MockMultipartFile file = new MockMultipartFile("file", "empty.csv", "text/csv", new byte[0]);
+
+        mockMvc.perform(multipart("/api/v1/products/import").file(file))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is("CSV file is required and must not be empty.")));
+    }
+
+    @Test
+    @DisplayName("Should return 409 when SKU already exists on create")
+    void shouldReturnConflictWhenSkuAlreadyExists() throws Exception {
+        when(productService.createProduct(any(ProductRequest.class)))
+                .thenThrow(new org.springframework.web.server.ResponseStatusException(
+                        HttpStatus.CONFLICT, "A product with SKU 'RS-001' already exists."));
+
+        mockMvc.perform(post("/api/v1/products")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(sampleRequest())))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message", is("A product with SKU 'RS-001' already exists.")));
     }
 }

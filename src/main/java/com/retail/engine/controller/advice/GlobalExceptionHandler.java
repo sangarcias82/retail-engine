@@ -2,7 +2,8 @@ package com.retail.engine.controller.advice;
 
 import com.retail.engine.dto.ErrorResponse;
 import com.retail.engine.dto.ValidationErrorResponse;
-import com.retail.engine.service.PurchaseException;
+import com.retail.engine.exception.CsvImportException;
+import com.retail.engine.exception.PurchaseException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -30,7 +31,13 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(PurchaseException.class)
     public ResponseEntity<ErrorResponse> handlePurchaseException(PurchaseException ex) {
-        return ResponseEntity.status(HttpStatus.CONFLICT)
+        return ResponseEntity.status(ex.getStatus())
+                .body(new ErrorResponse(ex.getMessage()));
+    }
+
+    @ExceptionHandler(CsvImportException.class)
+    public ResponseEntity<ErrorResponse> handleCsvImportException(CsvImportException ex) {
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
                 .body(new ErrorResponse(ex.getMessage()));
     }
 
